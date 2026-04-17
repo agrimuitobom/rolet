@@ -1054,6 +1054,113 @@ const Shockwave = ({ trigger, color = NEON.yellow }) =>
   );
 
 /* ============================================================================
+ * Reveal Overlay — ルーレット停止後のド派手当選表示
+ * ========================================================================= */
+const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => {
+  useEffect(() => {
+    if (!school) return;
+    const id = setTimeout(() => onDone?.(), duration);
+    return () => clearTimeout(id);
+  }, [school, duration, onDone]);
+
+  if (!school) return null;
+
+  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
+  const color = palette[(position - 1) % palette.length];
+  const isFinal = position >= total;
+
+  return h(motion.div, {
+    className: "fixed inset-0 z-[70] flex flex-col items-center justify-center px-4",
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+    transition: { duration: 0.18 },
+  },
+    /* backdrop */
+    h(motion.div, {
+      className: "pointer-events-none absolute inset-0 bg-black/60 backdrop-blur-md",
+      initial: { opacity: 0 },
+      animate: { opacity: 1 },
+      exit: { opacity: 0 },
+    }),
+    /* radial glow in accent color */
+    h(motion.div, {
+      className: "pointer-events-none absolute inset-0",
+      initial: { opacity: 0, scale: 0.9 },
+      animate: { opacity: 1, scale: 1 },
+      exit: { opacity: 0 },
+      transition: { duration: 0.5 },
+      style: {
+        background: `radial-gradient(ellipse at 50% 50%, ${color}38 0%, transparent 60%)`,
+      }
+    }),
+    /* top/bottom scan bars */
+    h(motion.div, {
+      className: "pointer-events-none absolute left-0 right-0",
+      initial: { top: "50%", height: 2, opacity: 0 },
+      animate: { top: "22%", opacity: 1 },
+      exit: { opacity: 0 },
+      transition: { type: "spring", stiffness: 160, damping: 20, delay: 0.05 },
+      style: {
+        height: 2,
+        background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+        boxShadow: `0 0 20px ${color}`,
+      }
+    }),
+    h(motion.div, {
+      className: "pointer-events-none absolute left-0 right-0",
+      initial: { bottom: "50%", height: 2, opacity: 0 },
+      animate: { bottom: "22%", opacity: 1 },
+      exit: { opacity: 0 },
+      transition: { type: "spring", stiffness: 160, damping: 20, delay: 0.05 },
+      style: {
+        height: 2,
+        background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+        boxShadow: `0 0 20px ${color}`,
+      }
+    }),
+    /* content */
+    h(motion.div, {
+      className: "relative z-10 flex flex-col items-center",
+      initial: { scale: 0.55, opacity: 0 },
+      animate: { scale: 1, opacity: 1 },
+      exit: { scale: 1.15, opacity: 0, transition: { duration: 0.25 } },
+      transition: { type: "spring", stiffness: 240, damping: 16 },
+    },
+      /* order badge */
+      h("div", { className: "mb-3 flex items-center gap-3 sm:mb-5" },
+        h("div", { className: "font-mono text-[9px] tracking-[0.4em] text-white/50 sm:text-[10px]" },
+          "PRESENTATION ORDER"),
+        h("div", {
+          className: "font-display text-2xl font-black sm:text-4xl",
+          style: { color, textShadow: `0 0 16px ${color}aa` },
+        }, `#${String(position).padStart(2, "0")}`),
+        h("div", { className: "font-mono text-[10px] text-white/30 sm:text-xs" },
+          `/ ${String(total).padStart(2, "0")}`)
+      ),
+      /* school name (huge) */
+      h(motion.div, {
+        initial: { letterSpacing: "0.4em", opacity: 0, y: 10 },
+        animate: { letterSpacing: "0.04em", opacity: 1, y: 0 },
+        transition: { delay: 0.12, duration: 0.45, ease: [0.16, 1, 0.3, 1] },
+        className: "font-jp font-black leading-none text-center text-[18vw] sm:text-[14vw] md:text-[11vw] lg:text-[9vw] max-w-[92vw]",
+        style: {
+          color: "#fff",
+          textShadow: `0 0 30px ${color}ee, 0 0 70px ${color}88, 0 0 120px ${color}44`,
+        }
+      }, school.name),
+      /* next indicator */
+      h(motion.div, {
+        initial: { opacity: 0 },
+        animate: { opacity: 0.7 },
+        transition: { delay: 1.0, duration: 0.3 },
+        className: "mt-6 font-mono text-[10px] tracking-[0.4em] text-cyan-300/80 sm:mt-10 sm:text-xs",
+      }, isFinal ? "▸ ALL POSITIONS DECIDED" : "▸ NEXT DRAW INCOMING...")
+    )
+  );
+};
+
+/* ============================================================================
  * Position Badge
  * ========================================================================= */
 const PositionBadge = ({ position, total }) => {
@@ -1274,6 +1381,18 @@ const ResultsBoard = ({ revealed, total }) => {
   // 発表順による色の違いは「リズム」のためだけ。優劣の意味はない。
   const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
   const accent = (i) => palette[i % palette.length];
+  const listRef = useRef(null);
+
+  // 新しい結果が追加されたら末尾に自動スクロール
+  useEffect(() => {
+    if (!listRef.current || revealed.length === 0) return;
+    const el = listRef.current;
+    // レイアウト反映を1フレーム待ってからスムーズスクロール
+    const raf = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [revealed.length]);
 
   return h("section", null,
     h(PanelHeader, {
@@ -1285,7 +1404,7 @@ const ResultsBoard = ({ revealed, total }) => {
       revealed.length === 0
         ? h("div", { className: "py-8 text-center font-mono text-xs tracking-wider text-white/30" },
             "AWAITING FIRST RESULT...")
-        : h("ol", { className: "space-y-1.5 max-h-[60vh] overflow-y-auto pr-1" },
+        : h("ol", { ref: listRef, className: "space-y-1.5 max-h-[60vh] overflow-y-auto pr-1 scroll-smooth" },
             h(AnimatePresence, null,
               ...revealed.map((s, i) =>
                 h(motion.li, {
@@ -1569,6 +1688,7 @@ const App = () => {
   const [muted, setMuted] = useState(() => loadMuted());
   const [savedDrafts, setSavedDrafts] = useState(() => loadSavedDrafts());
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [revealing, setRevealing] = useState(false);
 
   // Persist schools
   useEffect(() => { saveSchools(schools); }, [schools]);
@@ -1601,7 +1721,13 @@ const App = () => {
     setPhase("drawing");
   };
 
+  // ルーレット停止通知: まずリビール表示を出す。進行は onRevealDone で。
   const onFinishPosition = () => {
+    setRevealing(true);
+  };
+
+  const onRevealDone = () => {
+    setRevealing(false);
     const next = currentIdx + 1;
     if (next >= ranking.length) {
       setCurrentIdx(next);
@@ -1618,6 +1744,7 @@ const App = () => {
     setCurrentIdx(0);
     setPhase("setup");
     setShowFullScreen(false);
+    setRevealing(false);
   };
 
   const exportCsv = () => {
@@ -1800,6 +1927,17 @@ const App = () => {
         defaultName: suggestedName,
         onSave: saveDraft,
         onClose: () => setShowSaveDialog(false),
+      })
+    ),
+
+    /* Reveal オーバーレイ（各順位の決定後に大きく表示） */
+    h(AnimatePresence, null,
+      revealing && ranking[currentIdx] && h(RevealOverlay, {
+        key: `reveal-${currentIdx}`,
+        school: ranking[currentIdx],
+        position: currentIdx + 1,
+        total: ranking.length,
+        onDone: onRevealDone,
       })
     )
   );
