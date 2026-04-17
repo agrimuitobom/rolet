@@ -161,6 +161,7 @@ import {
   Zap, Plus, X, Upload, Play, RotateCcw, GripVertical,
   Radio, Activity, Target, Mic2, Shuffle, Maximize2,
   Pencil, Check, Volume2, VolumeX, Download,
+  ArrowUp, ArrowDown, Save, Trash2, Archive,
 } from "lucide-react";
 
 const h = React.createElement;
@@ -410,8 +411,9 @@ const makeId = () => {
 /* ============================================================================
  * Persistence (localStorage)
  * ========================================================================= */
-const STORAGE_SCHOOLS = "kineticdraft.schools.v1";
+const STORAGE_SCHOOLS = "kineticdraft.schools.v2";
 const STORAGE_MUTED = "kineticdraft.muted.v1";
+const STORAGE_SAVED = "kineticdraft.saved.v1";
 
 const loadSchools = () => {
   if (typeof window === "undefined") return null;
@@ -441,25 +443,69 @@ const saveMuted = (m) => {
   try { window.localStorage.setItem(STORAGE_MUTED, m ? "1" : "0"); } catch {}
 };
 
+const loadSavedDrafts = () => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_SAVED);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((x) => x && typeof x.id === "string" && typeof x.name === "string" && Array.isArray(x.ranking))
+      .map((x) => ({
+        id: x.id,
+        name: x.name,
+        createdAt: typeof x.createdAt === "string" ? x.createdAt : new Date().toISOString(),
+        ranking: x.ranking.filter((s) => s && typeof s.name === "string").map((s) => ({
+          id: typeof s.id === "string" ? s.id : makeId(),
+          name: s.name,
+        })),
+      }));
+  } catch { return []; }
+};
+
+const saveSavedDrafts = (list) => {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_SAVED, JSON.stringify(list)); } catch {}
+};
+
 /* ============================================================================
  * CSV Export
  * ========================================================================= */
-const downloadRankingCsv = (ranking) => {
-  const rows = [["順番", "高校名"]];
-  ranking.forEach((s, i) => rows.push([String(i + 1), s.name]));
-  const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  // BOM 付きで Excel の日本語文字化けを回避
-  const csv = "\uFEFF" + rows.map((r) => r.map(escape).join(",")).join("\r\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+const _csvEscape = (v) => `"${String(v).replace(/"/g, '""')}"`;
+const _csvToBlob = (rows) => {
+  const csv = "\uFEFF" + rows.map((r) => r.map(_csvEscape).join(",")).join("\r\n");
+  return new Blob([csv], { type: "text/csv;charset=utf-8" });
+};
+const _sanitizeFile = (s) => String(s || "").replace(/[\/\\:*?"<>|\s]+/g, "_").slice(0, 60) || "draft";
+const _downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
   a.href = url;
-  a.download = `presentation-order-${stamp}.csv`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+};
+const _timeStamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+
+const downloadRankingCsv = (ranking, label) => {
+  const rows = [["順番", "高校名"]];
+  ranking.forEach((s, i) => rows.push([String(i + 1), s.name]));
+  _downloadBlob(_csvToBlob(rows), `${_sanitizeFile(label || "presentation-order")}-${_timeStamp()}.csv`);
+};
+
+const downloadAllSavedCsv = (savedList) => {
+  const rows = [["大会名", "順番", "高校名", "保存日時"]];
+  savedList.forEach((rec) => {
+    const dt = new Date(rec.createdAt);
+    const dtStr = isNaN(dt.getTime()) ? rec.createdAt : dt.toLocaleString("ja-JP");
+    rec.ranking.forEach((s, i) => {
+      rows.push([rec.name, String(i + 1), s.name, dtStr]);
+    });
+  });
+  _downloadBlob(_csvToBlob(rows), `all-drafts-${_timeStamp()}.csv`);
 };
 
 /* ============================================================================
@@ -516,36 +562,44 @@ const Readout = ({ icon, label, value, pulse }) =>
 
 const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute }) =>
   h("header", { className: "relative z-20 border-b border-cyan-500/20 backdrop-blur-md" },
-    h("div", { className: "mx-auto flex max-w-6xl items-center justify-between px-6 py-4" },
-      h("div", { className: "flex items-center gap-3" },
+    h("div", { className: "mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4" },
+      h("div", { className: "flex items-center gap-2 sm:gap-3 min-w-0" },
         h(motion.div, {
           animate: { rotate: [0, 360] },
           transition: { duration: 8, repeat: Infinity, ease: "linear" },
-          className: "relative h-10 w-10",
+          className: "relative h-8 w-8 shrink-0 sm:h-10 sm:w-10",
         },
           h("div", { className: "absolute inset-0 rounded-full border-2 border-cyan-400/70" }),
           h("div", { className: "absolute inset-1 rounded-full border border-cyan-400/40" }),
           h("div", { className: "absolute inset-0 flex items-center justify-center" },
-            h(Zap, { className: "h-5 w-5 text-cyan-300", strokeWidth: 2.5 })
+            h(Zap, { className: "h-4 w-4 text-cyan-300 sm:h-5 sm:w-5", strokeWidth: 2.5 })
           )
         ),
-        h("div", { className: "leading-none" },
-          h("div", { className: "font-display text-2xl font-black tracking-[0.3em] text-white" },
+        h("div", { className: "leading-none min-w-0" },
+          h("div", { className: "font-display text-base font-black tracking-[0.15em] text-white sm:text-2xl sm:tracking-[0.3em]" },
             "KINETIC", h("span", { className: "text-cyan-400" }, "::"), "DRAFT"
           ),
-          h("div", { className: "font-mono text-[10px] tracking-[0.4em] text-cyan-400/70 mt-1" },
+          h("div", { className: "mt-1 hidden font-mono text-[10px] tracking-[0.4em] text-cyan-400/70 sm:block" },
             "PRESENTATION ORDER RANDOMIZER — v2.4.1"
           )
         )
       ),
-      h("div", { className: "flex items-center gap-6" },
-        h(Readout, { icon: h(Radio, { className: "h-3 w-3" }), label: "ENTRIES", value: String(schoolCount).padStart(2, "0") }),
-        h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true }),
+      h("div", { className: "flex shrink-0 items-center gap-3 sm:gap-6" },
+        /* モバイル用コンパクト表示 */
+        h("div", { className: "flex items-center gap-1.5 font-mono text-[10px] text-cyan-300 sm:hidden" },
+          h(Radio, { className: "h-3 w-3 text-cyan-400/70" }),
+          String(schoolCount).padStart(2, "0")
+        ),
+        /* デスクトップ用 */
+        h("div", { className: "hidden items-center gap-6 sm:flex" },
+          h(Readout, { icon: h(Radio, { className: "h-3 w-3" }), label: "ENTRIES", value: String(schoolCount).padStart(2, "0") }),
+          h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true })
+        ),
         h("button", {
           onClick: onToggleMute,
           "aria-label": muted ? "サウンドをオンにする" : "サウンドをミュート",
           title: muted ? "SOUND OFF" : "SOUND ON",
-          className: `flex h-8 w-8 items-center justify-center rounded border transition ${
+          className: `flex h-8 w-8 shrink-0 items-center justify-center rounded border transition ${
             muted
               ? "border-white/20 text-white/40 hover:border-white/40 hover:text-white/70"
               : "border-cyan-400/60 text-cyan-300 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(0,240,255,0.4)]"
@@ -612,6 +666,16 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
 
   const remove = (id) => setSchools(schools.filter((s) => s.id !== id));
 
+  const move = (id, dir) => {
+    const idx = schools.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    const next = idx + dir;
+    if (next < 0 || next >= schools.length) return;
+    const arr = [...schools];
+    [arr[idx], arr[next]] = [arr[next], arr[idx]];
+    setSchools(arr);
+  };
+
   const startEdit = (s) => {
     if (disabled) return;
     setEditingId(s.id);
@@ -647,32 +711,34 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
       label: "PARTICIPANT REGISTRY",
       sublabel: "登録・並べ替え・一括インポート",
     }),
-    h("div", { className: "glass mt-3 p-5" },
+    h("div", { className: "glass mt-3 p-4 sm:p-5" },
       /* 入力行 */
-      h("div", { className: "flex gap-2" },
+      h("div", { className: "flex flex-col gap-2 sm:flex-row" },
         h("input", {
           value: input,
           onChange: (e) => setInput(e.target.value),
           onKeyDown: (e) => e.key === "Enter" && addOne(),
           disabled,
-          placeholder: "高校名を入力（例：西条農業高等学校）",
-          className: "flex-1 rounded-md border border-cyan-500/30 bg-black/40 px-4 py-3 font-jp text-sm text-cyan-100 placeholder-cyan-300/30 outline-none transition focus:border-cyan-400 focus:shadow-[0_0_0_4px_rgba(0,240,255,0.15)]",
+          placeholder: "高校名を入力（例：西条農業）",
+          className: "w-full flex-1 rounded-md border border-cyan-500/30 bg-black/40 px-4 py-3 font-jp text-sm text-cyan-100 placeholder-cyan-300/30 outline-none transition focus:border-cyan-400 focus:shadow-[0_0_0_4px_rgba(0,240,255,0.15)]",
         }),
-        h("button", {
-          onClick: addOne,
-          disabled: disabled || !input.trim(),
-          className: "neon-btn neon-btn--cyan flex items-center gap-1.5",
-        },
-          h(Plus, { className: "h-4 w-4" }),
-          " ADD"
-        ),
-        h("button", {
-          onClick: () => setShowBulk(v => !v),
-          disabled,
-          className: "neon-btn neon-btn--magenta flex items-center gap-1.5",
-        },
-          h(Upload, { className: "h-4 w-4" }),
-          " BULK"
+        h("div", { className: "flex gap-2" },
+          h("button", {
+            onClick: addOne,
+            disabled: disabled || !input.trim(),
+            className: "neon-btn neon-btn--cyan flex flex-1 items-center justify-center gap-1.5 sm:flex-none",
+          },
+            h(Plus, { className: "h-4 w-4" }),
+            " ADD"
+          ),
+          h("button", {
+            onClick: () => setShowBulk(v => !v),
+            disabled,
+            className: "neon-btn neon-btn--magenta flex flex-1 items-center justify-center gap-1.5 sm:flex-none",
+          },
+            h(Upload, { className: "h-4 w-4" }),
+            " BULK"
+          )
         )
       ),
 
@@ -734,8 +800,23 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
                   }`,
                 },
                   h(GripVertical, {
-                    className: `h-4 w-4 ${isEditing ? "text-white/10" : "cursor-grab text-white/30 group-hover:text-cyan-400"}`
+                    className: `hidden h-4 w-4 sm:block ${isEditing ? "text-white/10" : "cursor-grab text-white/30 group-hover:text-cyan-400"}`
                   }),
+                  /* モバイル用 上下並べ替え */
+                  h("div", { className: "flex flex-col leading-none sm:hidden" },
+                    h("button", {
+                      onClick: () => move(s.id, -1),
+                      disabled: disabled || isEditing || i === 0,
+                      "aria-label": "上へ",
+                      className: "text-white/40 transition hover:text-cyan-300 disabled:opacity-20",
+                    }, h(ArrowUp, { className: "h-3.5 w-3.5" })),
+                    h("button", {
+                      onClick: () => move(s.id, 1),
+                      disabled: disabled || isEditing || i === schools.length - 1,
+                      "aria-label": "下へ",
+                      className: "text-white/40 transition hover:text-cyan-300 disabled:opacity-20",
+                    }, h(ArrowDown, { className: "h-3.5 w-3.5" }))
+                  ),
                   h("span", { className: "font-mono text-[10px] tracking-wider text-cyan-400/60" },
                     `#${String(i + 1).padStart(2, "0")}`
                   ),
@@ -1020,10 +1101,10 @@ const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive 
       label: "KINETIC SLOT ENGINE",
       sublabel: isActive ? `DRAWING POSITION #${currentIdx + 1}` : "STANDBY",
     }),
-    h("div", { className: "glass relative mt-3 overflow-hidden p-6" },
+    h("div", { className: "glass relative mt-3 overflow-hidden p-4 sm:p-6" },
       h("div", { className: "absolute left-0 top-0 h-full w-[3px] bg-gradient-to-b from-cyan-400 via-pink-500 to-yellow-300 opacity-80" }),
       h("div", { className: "absolute right-0 top-0 h-full w-[3px] bg-gradient-to-b from-yellow-300 via-pink-500 to-cyan-400 opacity-80" }),
-      h("div", { className: "mb-5 flex items-center justify-between" },
+      h("div", { className: "mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-5" },
         h(PositionBadge, { position: currentIdx + 1, total: schools.length }),
         h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-cyan-300/70" },
           `TARGET ▸ ${currentTarget ? "LOCKED" : "—"}`
@@ -1054,21 +1135,29 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
   const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
   const accent = (i) => palette[i % palette.length];
 
-  // 校数に応じてグリッドの列数を動的決定
-  const cols = ranking.length <= 4 ? 1
-            : ranking.length <= 8 ? 2
-            : ranking.length <= 15 ? 3
-            : 4;
+  // 校数に応じてグリッドの列数を段階的に（モバイルでは常に1列）
+  const gridCols = ranking.length <= 4
+    ? "grid-cols-1"
+    : ranking.length <= 8
+    ? "grid-cols-1 sm:grid-cols-2"
+    : ranking.length <= 15
+    ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3"
+    : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4";
 
-  // 校数に応じて文字サイズも動的に
-  const sizeClass = ranking.length <= 4 ? "text-5xl md:text-7xl"
-                  : ranking.length <= 8 ? "text-3xl md:text-5xl"
-                  : ranking.length <= 15 ? "text-2xl md:text-3xl"
-                  : "text-xl md:text-2xl";
-  const numSizeClass = ranking.length <= 4 ? "text-7xl md:text-9xl"
-                     : ranking.length <= 8 ? "text-5xl md:text-7xl"
-                     : ranking.length <= 15 ? "text-4xl md:text-5xl"
-                     : "text-3xl md:text-4xl";
+  // モバイル→デスクトップで段階的にスケール
+  const sizeClass = ranking.length <= 4 ? "text-3xl sm:text-5xl md:text-7xl"
+                  : ranking.length <= 8 ? "text-2xl sm:text-3xl md:text-5xl"
+                  : ranking.length <= 15 ? "text-xl sm:text-2xl md:text-3xl"
+                  : "text-lg sm:text-xl md:text-2xl";
+  const numSizeClass = ranking.length <= 4 ? "text-5xl sm:text-7xl md:text-9xl"
+                     : ranking.length <= 8 ? "text-4xl sm:text-5xl md:text-7xl"
+                     : ranking.length <= 15 ? "text-3xl sm:text-4xl md:text-5xl"
+                     : "text-2xl sm:text-3xl md:text-4xl";
+
+  // 背景の巨大番号サイズ（clamp で viewport 幅に追従）
+  const bgNumSize = ranking.length <= 4 ? "clamp(100px, 22vw, 240px)"
+                  : ranking.length <= 8 ? "clamp(80px, 16vw, 180px)"
+                  : "clamp(60px, 10vw, 120px)";
 
   return h(motion.div, {
     initial: { opacity: 0 },
@@ -1090,15 +1179,15 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
 
     /* ヘッダー */
     h("div", { className: "relative z-10 border-b border-cyan-500/20 backdrop-blur-sm" },
-      h("div", { className: "mx-auto flex max-w-[1600px] items-center justify-between px-8 py-5" },
-        h("div", null,
-          h("div", { className: "font-mono text-[10px] tracking-[0.4em] text-cyan-400/80" },
+      h("div", { className: "mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-5" },
+        h("div", { className: "min-w-0" },
+          h("div", { className: "font-mono text-[9px] tracking-[0.3em] text-cyan-400/80 sm:text-[10px] sm:tracking-[0.4em]" },
             "▸ FINAL ORDER FIXED"),
-          h("div", { className: "font-jp text-2xl font-black tracking-wide text-white mt-1" },
+          h("div", { className: "mt-1 font-jp text-lg font-black tracking-wide text-white sm:text-2xl" },
             "発表順番　決定"
           )
         ),
-        h("div", { className: "flex items-center gap-3" },
+        h("div", { className: "flex flex-wrap items-center gap-2 sm:gap-3" },
           onExportCsv && h("button", {
             onClick: onExportCsv,
             className: "neon-btn neon-btn--magenta flex items-center gap-2",
@@ -1118,10 +1207,9 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
     ),
 
     /* メイン：全順位グリッド */
-    h("div", { className: "relative z-10 mx-auto max-w-[1600px] px-8 py-10" },
+    h("div", { className: "relative z-10 mx-auto max-w-[1600px] px-4 py-6 sm:px-8 sm:py-10" },
       h("div", {
-        className: "grid gap-4",
-        style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` },
+        className: `grid gap-3 sm:gap-4 ${gridCols}`,
       },
         ...ranking.map((s, i) =>
           h(motion.div, {
@@ -1134,7 +1222,7 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
               damping: 20,
               delay: i * 0.06, // 1つずつタイミングをずらして登場
             },
-            className: "relative overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.04] to-transparent p-5 md:p-6",
+            className: "relative overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.04] to-transparent p-4 sm:p-5 md:p-6",
             style: {
               boxShadow: `inset 4px 0 0 ${accent(i)}, 0 0 0 1px rgba(255,255,255,0.03)`,
             }
@@ -1143,13 +1231,13 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
             h("div", {
               className: "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-display font-black leading-none opacity-[0.08]",
               style: {
-                fontSize: cols === 1 ? "240px" : cols === 2 ? "180px" : "120px",
+                fontSize: bgNumSize,
                 color: accent(i),
               }
             }, String(i + 1).padStart(2, "0")),
 
             /* 前景 */
-            h("div", { className: "relative flex items-center gap-5" },
+            h("div", { className: "relative flex items-center gap-3 sm:gap-5" },
               h("div", {
                 className: `font-display font-black leading-none ${numSizeClass}`,
                 style: {
@@ -1193,7 +1281,7 @@ const ResultsBoard = ({ revealed, total }) => {
       label: "PRESENTATION ORDER",
       sublabel: `${revealed.length} / ${total} DECIDED`,
     }),
-    h("div", { className: "glass mt-3 p-5" },
+    h("div", { className: "glass mt-3 p-4 sm:p-5" },
       revealed.length === 0
         ? h("div", { className: "py-8 text-center font-mono text-xs tracking-wider text-white/30" },
             "AWAITING FIRST RESULT...")
@@ -1234,9 +1322,239 @@ const ResultsBoard = ({ revealed, total }) => {
 };
 
 /* ============================================================================
+ * Modal (共通)
+ * ========================================================================= */
+const Modal = ({ onClose, children, maxWidthClass = "max-w-md" }) => {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return h(motion.div, {
+    className: "fixed inset-0 z-[80] flex items-center justify-center p-4",
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+  },
+    h("div", {
+      className: "absolute inset-0 bg-black/70 backdrop-blur-sm",
+      onClick: onClose,
+    }),
+    h(motion.div, {
+      className: `glass relative w-full ${maxWidthClass} p-5 sm:p-6`,
+      initial: { y: 20, opacity: 0, scale: 0.96 },
+      animate: { y: 0, opacity: 1, scale: 1 },
+      exit: { y: 20, opacity: 0, scale: 0.96 },
+      transition: { type: "spring", stiffness: 260, damping: 22 },
+    }, children)
+  );
+};
+
+/* ============================================================================
+ * SaveDraftDialog
+ * ========================================================================= */
+const SaveDraftDialog = ({ onSave, onClose, defaultName = "" }) => {
+  const [name, setName] = useState(defaultName);
+  const commit = () => {
+    const n = name.trim();
+    if (!n) return;
+    onSave(n);
+  };
+  return h(Modal, { onClose },
+    h("div", { className: "mb-4" },
+      h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-cyan-400/70" }, "▸ SAVE RESULT"),
+      h("div", { className: "mt-1 font-jp text-lg font-bold text-white" }, "結果を保存")
+    ),
+    h("label", { className: "block" },
+      h("span", { className: "mb-1 block font-mono text-[10px] tracking-wider text-white/50" },
+        "大会名 / COMPETITION NAME"),
+      h("input", {
+        autoFocus: true,
+        value: name,
+        onChange: (e) => setName(e.target.value),
+        onKeyDown: (e) => { if (e.key === "Enter") commit(); },
+        placeholder: "例：第１回プロジェクト発表",
+        className: "w-full rounded border border-cyan-500/30 bg-black/40 px-3 py-2.5 font-jp text-white outline-none transition focus:border-cyan-400 focus:shadow-[0_0_0_4px_rgba(0,240,255,0.15)]",
+      })
+    ),
+    h("div", { className: "mt-5 flex flex-wrap justify-end gap-2" },
+      h("button", {
+        onClick: onClose,
+        className: "neon-btn neon-btn--magenta",
+      }, "CANCEL"),
+      h("button", {
+        onClick: commit,
+        disabled: !name.trim(),
+        className: "neon-btn neon-btn--cyan",
+      },
+        h(Save, { className: "mr-1.5 inline h-4 w-4" }),
+        "SAVE"
+      )
+    )
+  );
+};
+
+/* ============================================================================
+ * SavedDraftsPanel
+ * ========================================================================= */
+const SavedDraftsPanel = ({ saved, onDelete, onRename, onExportAll, onExportOne }) => {
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+
+  const startEdit = (d) => { setEditingId(d.id); setEditValue(d.name); };
+  const cancelEdit = () => { setEditingId(null); setEditValue(""); };
+  const commitEdit = () => {
+    const n = editValue.trim();
+    if (!n || !editingId) { cancelEdit(); return; }
+    onRename(editingId, n);
+    cancelEdit();
+  };
+
+  const confirmDelete = (d) => {
+    if (typeof window !== "undefined" && window.confirm(`「${d.name}」を削除しますか？`)) {
+      onDelete(d.id);
+    }
+  };
+
+  const fmtDate = (iso) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
+
+  return h("section", { className: "relative" },
+    h(PanelHeader, {
+      icon: h(Archive, { className: "h-4 w-4" }),
+      label: "SAVED DRAFTS",
+      sublabel: `${saved.length} DRAFT(S) — 保存された発表順のアーカイブ`,
+    }),
+    h("div", { className: "glass mt-3 p-4 sm:p-5" },
+      h("div", { className: "mb-3 flex flex-wrap items-center justify-between gap-2" },
+        h("div", { className: "font-mono text-[10px] tracking-wider text-white/50" },
+          saved.length === 0
+            ? "ドラフト完了後に「SAVE」で結果を保存できます"
+            : `TOTAL ${saved.length} 件 — クリックで順番を展開`
+        ),
+        h("button", {
+          onClick: onExportAll,
+          disabled: saved.length === 0,
+          className: "neon-btn neon-btn--yellow flex items-center gap-1.5",
+        },
+          h(Download, { className: "h-4 w-4" }),
+          "一括 CSV"
+        )
+      ),
+      saved.length === 0
+        ? h("div", { className: "flex flex-col items-center justify-center rounded border border-dashed border-cyan-500/20 py-10 text-center" },
+            h(Archive, { className: "mb-2 h-6 w-6 text-cyan-400/40" }),
+            h("p", { className: "font-mono text-xs tracking-wider text-white/40" },
+              "NO SAVED DRAFTS — まだ保存されたドラフトはありません"
+            )
+          )
+        : h("ul", { className: "space-y-2 max-h-[50vh] overflow-y-auto pr-1" },
+            h(AnimatePresence, null,
+              ...saved.map((d) => {
+                const isEditing = editingId === d.id;
+                const isExpanded = expandedId === d.id;
+                return h(motion.li, {
+                  key: d.id,
+                  layout: true,
+                  initial: { opacity: 0, y: -8 },
+                  animate: { opacity: 1, y: 0 },
+                  exit: { opacity: 0, y: -8, transition: { duration: 0.15 } },
+                  className: "rounded border border-white/10 bg-white/[0.02] transition hover:border-cyan-500/30",
+                },
+                  h("div", { className: "flex flex-wrap items-center gap-2 px-3 py-2.5 sm:gap-3" },
+                    /* 左: 名前 / 日時 / 件数 */
+                    h("div", { className: "min-w-0 flex-1" },
+                      isEditing
+                        ? h("input", {
+                            autoFocus: true,
+                            value: editValue,
+                            onChange: (e) => setEditValue(e.target.value),
+                            onKeyDown: (e) => {
+                              if (e.key === "Enter") commitEdit();
+                              else if (e.key === "Escape") cancelEdit();
+                            },
+                            onBlur: commitEdit,
+                            className: "w-full rounded border border-cyan-400/60 bg-black/50 px-2 py-1 font-jp text-sm text-cyan-100 outline-none",
+                          })
+                        : h("button", {
+                            onClick: () => setExpandedId(isExpanded ? null : d.id),
+                            className: "block w-full text-left truncate font-jp text-sm font-bold text-white hover:text-cyan-300",
+                            title: "クリックで順番を展開",
+                          }, d.name),
+                      h("div", { className: "mt-0.5 flex items-center gap-2 font-mono text-[10px] tracking-wider text-white/40" },
+                        h("span", null, fmtDate(d.createdAt)),
+                        h("span", { className: "text-cyan-400/50" }, "▸"),
+                        h("span", null, `${d.ranking.length} 校`)
+                      )
+                    ),
+                    /* 右: 操作ボタン */
+                    h("div", { className: "flex shrink-0 items-center gap-1" },
+                      isEditing
+                        ? h("button", {
+                            onMouseDown: (e) => e.preventDefault(),
+                            onClick: commitEdit,
+                            "aria-label": "保存",
+                            className: "p-1.5 text-cyan-300 transition hover:text-cyan-200",
+                          }, h(Check, { className: "h-4 w-4" }))
+                        : h("button", {
+                            onClick: () => startEdit(d),
+                            "aria-label": "名前を編集",
+                            className: "p-1.5 text-white/40 transition hover:text-cyan-300",
+                          }, h(Pencil, { className: "h-4 w-4" })),
+                      h("button", {
+                        onClick: () => onExportOne(d),
+                        "aria-label": "CSV 出力",
+                        title: "CSV",
+                        className: "p-1.5 text-white/40 transition hover:text-yellow-300",
+                      }, h(Download, { className: "h-4 w-4" })),
+                      h("button", {
+                        onClick: () => confirmDelete(d),
+                        "aria-label": "削除",
+                        className: "p-1.5 text-white/40 transition hover:text-pink-400",
+                      }, h(Trash2, { className: "h-4 w-4" }))
+                    )
+                  ),
+                  /* 展開時: 順番リスト */
+                  isExpanded && !isEditing && h(motion.div, {
+                    initial: { height: 0, opacity: 0 },
+                    animate: { height: "auto", opacity: 1 },
+                    exit: { height: 0, opacity: 0 },
+                    className: "overflow-hidden border-t border-white/5",
+                  },
+                    h("ol", { className: "grid gap-1 px-3 py-3 sm:grid-cols-2" },
+                      ...d.ranking.map((s, i) =>
+                        h("li", {
+                          key: `${d.id}-${s.id || i}`,
+                          className: "flex items-center gap-2 font-jp text-xs",
+                        },
+                          h("span", { className: "min-w-[2.25rem] font-mono text-[10px] tracking-wider text-cyan-400/70" },
+                            String(i + 1).padStart(2, "0")),
+                          h("span", { className: "truncate text-white/90" }, s.name)
+                        )
+                      )
+                    )
+                  )
+                );
+              })
+            )
+          )
+    )
+  );
+};
+
+/* ============================================================================
  * Root App
  * ========================================================================= */
-const SAMPLE = ["松山東高校", "新居浜西高校", "今治西高校", "宇和島南高校", "西条農業高校"];
+const SAMPLE = [
+  "西条農業", "東予総合", "丹原", "今治南", "伊予農業",
+  "愛大附", "上浮穴", "大洲", "大洲農業", "川之石",
+  "野村", "宇和", "北宇和", "三間", "南宇和",
+];
 
 const App = () => {
   const [schools, setSchools] = useState(() => {
@@ -1249,9 +1567,14 @@ const App = () => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [muted, setMuted] = useState(() => loadMuted());
+  const [savedDrafts, setSavedDrafts] = useState(() => loadSavedDrafts());
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   // Persist schools
   useEffect(() => { saveSchools(schools); }, [schools]);
+
+  // Persist saved drafts
+  useEffect(() => { saveSavedDrafts(savedDrafts); }, [savedDrafts]);
 
   // Sync mute state with audio engine
   useEffect(() => {
@@ -1302,6 +1625,46 @@ const App = () => {
     downloadRankingCsv(ranking);
   };
 
+  // デフォルト名：「第N回 ドラフト」で軽くサジェスト（既存に第N回があれば + 1）
+  const suggestedName = useMemo(() => {
+    const nums = savedDrafts
+      .map((d) => {
+        const m = d.name.match(/第\s*(\d+)\s*回/);
+        return m ? parseInt(m[1], 10) : 0;
+      })
+      .filter((n) => n > 0);
+    const next = (nums.length ? Math.max(...nums) : 0) + 1;
+    return `第${next}回 発表`;
+  }, [savedDrafts]);
+
+  const saveDraft = (name) => {
+    const entry = {
+      id: makeId(),
+      name: name.trim() || `ドラフト ${new Date().toLocaleString("ja-JP")}`,
+      createdAt: new Date().toISOString(),
+      ranking: ranking.map((s) => ({ id: s.id, name: s.name })),
+    };
+    setSavedDrafts([entry, ...savedDrafts]);
+    setShowSaveDialog(false);
+  };
+
+  const deleteDraft = (id) => {
+    setSavedDrafts(savedDrafts.filter((d) => d.id !== id));
+  };
+
+  const renameDraft = (id, name) => {
+    setSavedDrafts(savedDrafts.map((d) => (d.id === id ? { ...d, name } : d)));
+  };
+
+  const exportAllSavedCsv = () => {
+    if (savedDrafts.length === 0) return;
+    downloadAllSavedCsv(savedDrafts);
+  };
+
+  const exportOneSavedCsv = (d) => {
+    downloadRankingCsv(d.ranking, d.name);
+  };
+
   return h("div", { className: "relative min-h-screen overflow-x-hidden bg-[#05060E] text-white" },
     h(Backdrop),
     h(HeaderHUD, {
@@ -1310,20 +1673,20 @@ const App = () => {
       muted,
       onToggleMute: () => setMuted((m) => !m),
     }),
-    h("main", { className: "relative z-10 mx-auto max-w-6xl px-6 py-8" },
+    h("main", { className: "relative z-10 mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8" },
       /* タイトルブロック */
-      h("div", { className: "mb-10 flex flex-col items-start gap-6 md:flex-row md:items-end md:justify-between" },
+      h("div", { className: "mb-6 flex flex-col items-start gap-4 sm:mb-10 sm:gap-6 md:flex-row md:items-end md:justify-between" },
         h("div", null,
           h(motion.div, {
             initial: { opacity: 0, y: 20 },
             animate: { opacity: 1, y: 0 },
-            className: "font-mono text-xs tracking-[0.4em] text-cyan-400/70",
+            className: "font-mono text-[10px] tracking-[0.3em] text-cyan-400/70 sm:text-xs sm:tracking-[0.4em]",
           }, "▸ AGRICULTURE CLUB PRESENTATION DRAFT"),
           h(motion.h1, {
             initial: { opacity: 0, y: 30 },
             animate: { opacity: 1, y: 0 },
             transition: { delay: 0.08 },
-            className: "font-jp font-black leading-[0.95] tracking-tight text-[44px] md:text-[64px]",
+            className: "font-jp font-black leading-[0.95] tracking-tight text-[32px] sm:text-[44px] md:text-[64px]",
             style: {
               background:
                 "linear-gradient(180deg, #ffffff 0%, #ffffff 50%, #00F0FF 70%, #FF2E9A 100%)",
@@ -1336,10 +1699,10 @@ const App = () => {
             initial: { opacity: 0 },
             animate: { opacity: 1 },
             transition: { delay: 0.2 },
-            className: "mt-3 font-mono text-xs tracking-[0.3em] text-white/40",
+            className: "mt-3 font-mono text-[10px] tracking-[0.2em] text-white/40 sm:text-xs sm:tracking-[0.3em]",
           }, "PRESENTATION ORDER RANDOMIZER")
         ),
-        h("div", { className: "flex items-center gap-3" },
+        h("div", { className: "flex flex-wrap items-center gap-2 sm:gap-3" },
           phase === "setup" && h(motion.button, {
             whileHover: { scale: 1.02 },
             whileTap: { scale: 0.97 },
@@ -1362,8 +1725,17 @@ const App = () => {
           phase === "finished" && h(motion.button, {
             whileHover: { scale: 1.02 },
             whileTap: { scale: 0.97 },
-            onClick: () => setShowFullScreen(true),
+            onClick: () => setShowSaveDialog(true),
             className: "neon-btn neon-btn--yellow flex items-center gap-2",
+          },
+            h(Save, { className: "h-4 w-4" }),
+            "SAVE RESULT"
+          ),
+          phase === "finished" && h(motion.button, {
+            whileHover: { scale: 1.02 },
+            whileTap: { scale: 0.97 },
+            onClick: () => setShowFullScreen(true),
+            className: "neon-btn neon-btn--cyan flex items-center gap-2",
           },
             h(Maximize2, { className: "h-4 w-4" }),
             "全画面表示"
@@ -1380,7 +1752,7 @@ const App = () => {
         )
       ),
       /* メインレイアウト */
-      h("div", { className: "grid gap-8 lg:grid-cols-[1fr_1.1fr]" },
+      h("div", { className: "grid gap-6 sm:gap-8 lg:grid-cols-[1fr_1.1fr]" },
         h("div", null,
           phase === "setup"
             ? h(SchoolRegistry, { schools, setSchools, disabled: false })
@@ -1396,8 +1768,18 @@ const App = () => {
           h(ResultsBoard, { revealed, total: ranking.length || schools.length })
         )
       ),
+      /* 保存済みドラフト */
+      h("div", { className: "mt-8 sm:mt-10" },
+        h(SavedDraftsPanel, {
+          saved: savedDrafts,
+          onDelete: deleteDraft,
+          onRename: renameDraft,
+          onExportAll: exportAllSavedCsv,
+          onExportOne: exportOneSavedCsv,
+        })
+      ),
       /* フッター */
-      h("footer", { className: "mt-16 flex items-center justify-between border-t border-white/5 pt-6 font-mono text-[10px] tracking-[0.3em] text-white/30" },
+      h("footer", { className: "mt-10 flex flex-col items-start justify-between gap-2 border-t border-white/5 pt-6 font-mono text-[9px] tracking-[0.2em] text-white/30 sm:mt-16 sm:flex-row sm:items-center sm:text-[10px] sm:tracking-[0.3em]" },
         h("div", null, "© KINETIC::DRAFT — BUILT WITH REACT + FRAMER MOTION"),
         h("div", null, "SYS.READY")
       )
@@ -1409,6 +1791,15 @@ const App = () => {
         ranking,
         onClose: () => setShowFullScreen(false),
         onExportCsv: exportCsv,
+      })
+    ),
+
+    /* 保存ダイアログ */
+    h(AnimatePresence, null,
+      showSaveDialog && h(SaveDraftDialog, {
+        defaultName: suggestedName,
+        onSave: saveDraft,
+        onClose: () => setShowSaveDialog(false),
       })
     )
   );
