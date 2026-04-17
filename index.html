@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KINETIC::DRAFT — Presentation Order Randomizer</title>
+<meta name="description" content="Cyber-Athletic High-Tech な高校対抗・順位決定スロットアプリ。React + Framer Motion 製。" />
+
+<!-- Inline SVG favicon (外部リクエスト不要) -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2305060E'/%3E%3Cpath d='M55 15 L30 55 L48 55 L42 85 L70 42 L52 42 Z' fill='%2300F0FF'/%3E%3C/svg%3E" />
+
+<!-- Fonts: Orbitron (display) + JetBrains Mono (data) + Noto Sans JP -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@500;700;900&display=swap" rel="stylesheet">
+
+<!-- Tailwind CSS (CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        display: ['Orbitron', 'Noto Sans JP', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+        jp: ['Noto Sans JP', 'sans-serif'],
+      },
+    },
+  },
+};
+</script>
+
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: #05060E;
+    color: white;
+    font-family: 'Noto Sans JP', 'Orbitron', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Glassmorphism panel */
+  .glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 10px 40px rgba(0,0,0,0.4);
+  }
+
+  /* Neon buttons */
+  .neon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.7rem 1.2rem;
+    border-radius: 6px;
+    font-family: 'Orbitron', 'Noto Sans JP', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    font-size: 12px;
+    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    cursor: pointer;
+    background: rgba(0,0,0,0.4);
+    color: white;
+    border: 1px solid;
+    overflow: hidden;
+  }
+  .neon-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .neon-btn:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+  .neon-btn--cyan {
+    border-color: #00F0FF;
+    color: #00F0FF;
+    box-shadow: 0 0 0 rgba(0,240,255,0), inset 0 0 10px rgba(0,240,255,0.1);
+  }
+  .neon-btn--cyan:not(:disabled):hover {
+    background: rgba(0,240,255,0.12);
+    box-shadow: 0 0 20px rgba(0,240,255,0.5), inset 0 0 20px rgba(0,240,255,0.15);
+  }
+  .neon-btn--magenta {
+    border-color: #FF2E9A;
+    color: #FF2E9A;
+    box-shadow: inset 0 0 10px rgba(255,46,154,0.1);
+  }
+  .neon-btn--magenta:not(:disabled):hover {
+    background: rgba(255,46,154,0.12);
+    box-shadow: 0 0 20px rgba(255,46,154,0.5), inset 0 0 20px rgba(255,46,154,0.15);
+  }
+  .neon-btn--yellow {
+    border-color: #F5FF3D;
+    color: #F5FF3D;
+    box-shadow: inset 0 0 10px rgba(245,255,61,0.1);
+  }
+  .neon-btn--yellow:not(:disabled):hover {
+    background: rgba(245,255,61,0.15);
+    box-shadow: 0 0 30px rgba(245,255,61,0.6), inset 0 0 20px rgba(245,255,61,0.2);
+  }
+
+  /* カスタムスクロールバー */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #00F0FF, #FF2E9A);
+    border-radius: 4px;
+  }
+
+  /* 選択色 */
+  ::selection { background: rgba(0,240,255,0.3); color: white; }
+
+  /* Hover shine effect for neon buttons */
+  .neon-btn::after {
+    content: "";
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+    transition: left 0.6s;
+  }
+  .neon-btn:not(:disabled):hover::after {
+    left: 100%;
+  }
+
+  /* Lucide icon wrapper fix */
+  .lucide-wrap svg { display: inline-block; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Import map for bare module specifiers -->
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/": "https://esm.sh/react@18.3.1/",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "framer-motion": "https://esm.sh/framer-motion@11.11.17?external=react,react-dom",
+    "lucide-react": "https://esm.sh/lucide-react@0.468.0?external=react"
+  }
+}
+</script>
+
+<script type="module">
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { createRoot } from "react-dom/client";
+import { motion, AnimatePresence, useMotionValue, animate } from "framer-motion";
+import {
+  Zap, Plus, X, Upload, Play, RotateCcw, GripVertical,
+  Radio, Activity, Target, Mic2, Shuffle, Maximize2,
+} from "lucide-react";
+
+const h = React.createElement;
+
+/* ============================================================================
+ * SOUND ENGINE (Web Audio API hook - 音は出さないが設計は完備)
+ * ========================================================================= */
+const useSoundEngine = () => {
+  const ctxRef = useRef(null);
+  const ensureCtx = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    // 実際に鳴らす場合:
+    // if (!ctxRef.current) ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    return ctxRef.current;
+  }, []);
+  const play = useCallback((event) => {
+    ensureCtx();
+    // event: "tick" | "spin" | "stop" | "impact" | "fanfare"
+    if (typeof window !== "undefined" && window.__DEBUG_SOUND__) {
+      console.debug(`[SFX] ${event}`);
+    }
+  }, [ensureCtx]);
+  return { play };
+};
+
+/* ============================================================================
+ * LOGIC — ロジック層（プレゼンから完全分離）
+ * ========================================================================= */
+const shuffleArray = (arr) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+const generateRanking = (schools) => shuffleArray(schools);
+
+const NEON = {
+  cyan:    "#00F0FF",
+  magenta: "#FF2E9A",
+  yellow:  "#F5FF3D",
+  lime:    "#7CFF6B",
+};
+
+// crypto.randomUUID() の互換ラッパー（古い環境や非HTTPSでも動く）
+const makeId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+};
+
+/* ============================================================================
+ * Backdrop
+ * ========================================================================= */
+const Backdrop = () => h("div", { className: "pointer-events-none fixed inset-0 overflow-hidden" },
+  h("div", {
+    className: "absolute inset-0",
+    style: {
+      background:
+        "radial-gradient(ellipse at 20% 0%, rgba(0,240,255,0.18) 0%, transparent 45%)," +
+        "radial-gradient(ellipse at 80% 100%, rgba(255,46,154,0.18) 0%, transparent 45%)," +
+        "radial-gradient(ellipse at 50% 50%, rgba(245,255,61,0.05) 0%, transparent 60%)," +
+        "linear-gradient(180deg, #05060E 0%, #0A0B1A 50%, #05060E 100%)",
+    }
+  }),
+  h("svg", { className: "absolute inset-0 h-full w-full opacity-[0.15]", xmlns: "http://www.w3.org/2000/svg" },
+    h("defs", null,
+      h("pattern", { id: "grid", width: 56, height: 56, patternUnits: "userSpaceOnUse" },
+        h("path", { d: "M 56 0 L 0 0 0 56", fill: "none", stroke: "#00F0FF", strokeWidth: 0.5 })
+      ),
+      h("pattern", { id: "gridMinor", width: 14, height: 14, patternUnits: "userSpaceOnUse" },
+        h("path", { d: "M 14 0 L 0 0 0 14", fill: "none", stroke: "#00F0FF", strokeWidth: 0.2 })
+      )
+    ),
+    h("rect", { width: "100%", height: "100%", fill: "url(#gridMinor)" }),
+    h("rect", { width: "100%", height: "100%", fill: "url(#grid)" })
+  ),
+  h("div", {
+    className: "absolute inset-0 opacity-[0.08] mix-blend-screen",
+    style: {
+      backgroundImage:
+        "repeating-linear-gradient(0deg, rgba(255,255,255,0.6) 0px, rgba(255,255,255,0.6) 1px, transparent 1px, transparent 3px)",
+    }
+  }),
+  h("svg", { className: "absolute inset-0 h-full w-full opacity-[0.06] mix-blend-overlay" },
+    h("filter", { id: "noise" },
+      h("feTurbulence", { type: "fractalNoise", baseFrequency: "0.9", numOctaves: "2", stitchTiles: "stitch" }),
+      h("feColorMatrix", { values: "0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0" })
+    ),
+    h("rect", { width: "100%", height: "100%", filter: "url(#noise)" })
+  )
+);
+
+/* ============================================================================
+ * Header HUD
+ * ========================================================================= */
+const Readout = ({ icon, label, value, pulse }) =>
+  h("div", { className: "flex items-center gap-2 font-mono text-[10px] tracking-[0.2em]" },
+    h("span", { className: "text-cyan-400/70 lucide-wrap" }, icon),
+    h("span", { className: "text-white/50" }, label),
+    h("span", { className: `text-cyan-300 ${pulse ? "animate-pulse" : ""}` }, value)
+  );
+
+const HeaderHUD = ({ schoolCount, statusLabel }) =>
+  h("header", { className: "relative z-20 border-b border-cyan-500/20 backdrop-blur-md" },
+    h("div", { className: "mx-auto flex max-w-6xl items-center justify-between px-6 py-4" },
+      h("div", { className: "flex items-center gap-3" },
+        h(motion.div, {
+          animate: { rotate: [0, 360] },
+          transition: { duration: 8, repeat: Infinity, ease: "linear" },
+          className: "relative h-10 w-10",
+        },
+          h("div", { className: "absolute inset-0 rounded-full border-2 border-cyan-400/70" }),
+          h("div", { className: "absolute inset-1 rounded-full border border-cyan-400/40" }),
+          h("div", { className: "absolute inset-0 flex items-center justify-center" },
+            h(Zap, { className: "h-5 w-5 text-cyan-300", strokeWidth: 2.5 })
+          )
+        ),
+        h("div", { className: "leading-none" },
+          h("div", { className: "font-display text-2xl font-black tracking-[0.3em] text-white" },
+            "KINETIC", h("span", { className: "text-cyan-400" }, "::"), "DRAFT"
+          ),
+          h("div", { className: "font-mono text-[10px] tracking-[0.4em] text-cyan-400/70 mt-1" },
+            "PRESENTATION ORDER RANDOMIZER — v2.4.1"
+          )
+        )
+      ),
+      h("div", { className: "flex items-center gap-6" },
+        h(Readout, { icon: h(Radio, { className: "h-3 w-3" }), label: "ENTRIES", value: String(schoolCount).padStart(2, "0") }),
+        h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true })
+      )
+    )
+  );
+
+/* ============================================================================
+ * Panel Header (共通)
+ * ========================================================================= */
+const PanelHeader = ({ icon, label, sublabel }) =>
+  h("div", { className: "flex items-center gap-2" },
+    h("span", { className: "text-cyan-400 lucide-wrap" }, icon),
+    h("h2", { className: "font-display text-sm font-bold tracking-[0.3em] text-white" }, label),
+    h("div", { className: "h-px flex-1 bg-gradient-to-r from-cyan-500/50 to-transparent" }),
+    h("span", { className: "font-mono text-[10px] tracking-wider text-white/40" }, sublabel)
+  );
+
+const EmptyState = () =>
+  h("div", { className: "flex flex-col items-center justify-center rounded border border-dashed border-cyan-500/20 py-10 text-center" },
+    h(Shuffle, { className: "mb-2 h-6 w-6 text-cyan-400/40" }),
+    h("p", { className: "font-mono text-xs tracking-wider text-white/40" },
+      "NO PARTICIPANTS — 上のフォームから高校を追加してください"
+    )
+  );
+
+/* ============================================================================
+ * School Registry
+ * ========================================================================= */
+const SchoolRegistry = ({ schools, setSchools, disabled }) => {
+  const [input, setInput] = useState("");
+  const [bulk, setBulk] = useState("");
+  const [showBulk, setShowBulk] = useState(false);
+  const [dragIdx, setDragIdx] = useState(null);
+  const [hoverIdx, setHoverIdx] = useState(null);
+
+  const addOne = () => {
+    const name = input.trim();
+    if (!name) return;
+    if (schools.some((s) => s.name === name)) { setInput(""); return; }
+    setSchools([...schools, { id: makeId(), name }]);
+    setInput("");
+  };
+
+  const addBulk = () => {
+    const lines = bulk.split(/\r?\n|,|、|\t/).map((s) => s.trim()).filter(Boolean);
+    const seen = new Set(schools.map((s) => s.name));
+    const fresh = [];
+    lines.forEach((n) => {
+      if (!seen.has(n)) { seen.add(n); fresh.push({ id: makeId(), name: n }); }
+    });
+    setSchools([...schools, ...fresh]);
+    setBulk("");
+    setShowBulk(false);
+  };
+
+  const remove = (id) => setSchools(schools.filter((s) => s.id !== id));
+
+  const handleDragStart = (i) => setDragIdx(i);
+  const handleDragOver = (e, i) => { e.preventDefault(); setHoverIdx(i); };
+  const handleDrop = () => {
+    if (dragIdx === null || hoverIdx === null || dragIdx === hoverIdx) {
+      setDragIdx(null); setHoverIdx(null); return;
+    }
+    const next = [...schools];
+    const [moved] = next.splice(dragIdx, 1);
+    next.splice(hoverIdx, 0, moved);
+    setSchools(next);
+    setDragIdx(null); setHoverIdx(null);
+  };
+
+  return h("section", { className: "relative" },
+    h(PanelHeader, {
+      icon: h(Target, { className: "h-4 w-4" }),
+      label: "PARTICIPANT REGISTRY",
+      sublabel: "登録・並べ替え・一括インポート",
+    }),
+    h("div", { className: "glass mt-3 p-5" },
+      /* 入力行 */
+      h("div", { className: "flex gap-2" },
+        h("input", {
+          value: input,
+          onChange: (e) => setInput(e.target.value),
+          onKeyDown: (e) => e.key === "Enter" && addOne(),
+          disabled,
+          placeholder: "高校名を入力（例：西条農業高等学校）",
+          className: "flex-1 rounded-md border border-cyan-500/30 bg-black/40 px-4 py-3 font-jp text-sm text-cyan-100 placeholder-cyan-300/30 outline-none transition focus:border-cyan-400 focus:shadow-[0_0_0_4px_rgba(0,240,255,0.15)]",
+        }),
+        h("button", {
+          onClick: addOne,
+          disabled: disabled || !input.trim(),
+          className: "neon-btn neon-btn--cyan flex items-center gap-1.5",
+        },
+          h(Plus, { className: "h-4 w-4" }),
+          " ADD"
+        ),
+        h("button", {
+          onClick: () => setShowBulk(v => !v),
+          disabled,
+          className: "neon-btn neon-btn--magenta flex items-center gap-1.5",
+        },
+          h(Upload, { className: "h-4 w-4" }),
+          " BULK"
+        )
+      ),
+
+      /* 一括追加 */
+      h(AnimatePresence, null,
+        showBulk && h(motion.div, {
+          initial: { height: 0, opacity: 0 },
+          animate: { height: "auto", opacity: 1 },
+          exit: { height: 0, opacity: 0 },
+          transition: { duration: 0.25 },
+          className: "overflow-hidden",
+        },
+          h("div", { className: "mt-3 rounded-md border border-pink-500/30 bg-black/40 p-3" },
+            h("div", { className: "mb-2 font-mono text-[10px] tracking-[0.3em] text-pink-300/80" },
+              "MULTI-LINE INPUT ▸ 改行 / カンマ / 読点 / タブ で区切り"
+            ),
+            h("textarea", {
+              value: bulk,
+              onChange: (e) => setBulk(e.target.value),
+              rows: 4,
+              placeholder: "松山東高校\n新居浜工業高校, 今治南高校\n...",
+              className: "w-full rounded bg-black/60 p-2 font-jp text-sm text-pink-100 outline-none",
+            }),
+            h("div", { className: "mt-2 flex justify-end" },
+              h("button", {
+                onClick: addBulk,
+                className: "neon-btn neon-btn--magenta",
+              }, "IMPORT ALL")
+            )
+          )
+        )
+      ),
+
+      /* 一覧 */
+      h("div", { className: "mt-4" },
+        schools.length === 0 ? h(EmptyState) :
+          h("ul", {
+            className: "space-y-1.5 max-h-[50vh] overflow-y-auto pr-1",
+            onDragEnd: handleDrop,
+          },
+            h(AnimatePresence, null,
+              ...schools.map((s, i) =>
+                h(motion.li, {
+                  key: s.id,
+                  layout: true,
+                  initial: { opacity: 0, x: -20 },
+                  animate: { opacity: 1, x: 0 },
+                  exit: { opacity: 0, x: 20, transition: { duration: 0.15 } },
+                  draggable: !disabled,
+                  onDragStart: () => handleDragStart(i),
+                  onDragOver: (e) => handleDragOver(e, i),
+                  className: `group relative flex items-center gap-3 rounded border px-3 py-2.5 transition-all ${
+                    hoverIdx === i && dragIdx !== null
+                      ? "border-cyan-400 bg-cyan-400/10"
+                      : "border-white/10 bg-white/[0.02] hover:border-cyan-500/40 hover:bg-cyan-500/5"
+                  }`,
+                },
+                  h(GripVertical, { className: "h-4 w-4 cursor-grab text-white/30 group-hover:text-cyan-400" }),
+                  h("span", { className: "font-mono text-[10px] tracking-wider text-cyan-400/60" },
+                    `#${String(i + 1).padStart(2, "0")}`
+                  ),
+                  h("span", { className: "flex-1 font-jp text-[15px] tracking-wide text-white" }, s.name),
+                  h("button", {
+                    onClick: () => remove(s.id),
+                    disabled,
+                    className: "text-white/30 transition hover:text-pink-400",
+                    "aria-label": "remove",
+                  },
+                    h(X, { className: "h-4 w-4" })
+                  )
+                )
+              )
+            )
+          )
+      )
+    )
+  );
+};
+
+/* ============================================================================
+ * Slot Engine
+ * ========================================================================= */
+const ROW_HEIGHT = 92;
+const VISIBLE = 5;
+
+const SlotRow = ({ name, isStopped, drumIndex }) => {
+  const rowRef = useRef(null);
+  const [tilt, setTilt] = useState(0);
+  const [opacity, setOpacity] = useState(1);
+
+  useEffect(() => {
+    let raf;
+    const update = () => {
+      if (rowRef.current) {
+        const rect = rowRef.current.getBoundingClientRect();
+        const parent = rowRef.current.closest("[data-slot-viewport]")?.getBoundingClientRect();
+        if (parent) {
+          const center = parent.top + parent.height / 2;
+          const offset = rect.top + rect.height / 2 - center;
+          const norm = Math.max(-1, Math.min(1, offset / (parent.height / 2)));
+          setTilt(norm * 55);
+          setOpacity(1 - Math.abs(norm) * 0.75);
+        }
+      }
+      raf = requestAnimationFrame(update);
+    };
+    raf = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const colorSet = [NEON.cyan, NEON.magenta, NEON.yellow, NEON.lime];
+  const color = colorSet[drumIndex % colorSet.length];
+
+  return h("div", {
+    ref: rowRef,
+    style: {
+      transform: `rotateX(${tilt}deg)`,
+      opacity,
+      transformStyle: "preserve-3d",
+    },
+    className: "font-display text-center text-2xl font-bold tracking-wider transition-colors",
+  },
+    h("span", {
+      className: "font-jp",
+      style: {
+        color: isStopped && Math.abs(tilt) < 8 ? color : "#ffffff",
+        textShadow:
+          isStopped && Math.abs(tilt) < 8
+            ? `0 0 20px ${color}, 0 0 40px ${color}66`
+            : "0 0 12px rgba(0,240,255,0.3)",
+      }
+    }, name)
+  );
+};
+
+const SlotDrum = ({ pool, isSpinning, resultName, onStopped, drumIndex }) => {
+  const y = useMotionValue(0);
+  const [localPhase, setLocalPhase] = useState("idle");
+  const { play } = useSoundEngine();
+
+  const reel = useMemo(() => {
+    if (pool.length === 0) return [];
+    const repeats = Math.max(8, Math.ceil(60 / pool.length));
+    return Array.from({ length: repeats }, () => pool).flat();
+  }, [pool]);
+
+  useEffect(() => {
+    if (!isSpinning) return;
+    let mounted = true;
+    setLocalPhase("spinning");
+    play("spin");
+
+    const baseSpinDistance = (reel.length * ROW_HEIGHT) * 1.2 + drumIndex * ROW_HEIGHT * 4;
+    const spinControls = animate(y, -baseSpinDistance, {
+      duration: 1.2 + drumIndex * 0.15,
+      ease: [0.22, 0.68, 0.27, 1.0],
+    });
+
+    spinControls.then(() => {
+      if (!mounted) return;
+      setLocalPhase("decelerating");
+      const targetIndex = pool.findIndex((s) => s.name === resultName);
+      if (targetIndex < 0) return;
+
+      const currentY = y.get();
+      const currentSlot = Math.abs(currentY / ROW_HEIGHT);
+      const nextLap = Math.ceil(currentSlot / pool.length) + 1;
+      const finalSlot = nextLap * pool.length + targetIndex;
+      const finalY = -(finalSlot * ROW_HEIGHT);
+
+      let lastSlot = -1;
+      const finalControls = animate(y, finalY, {
+        duration: 0.7,
+        ease: [0.16, 1, 0.3, 1],
+        onUpdate: (v) => {
+          const slot = Math.floor(Math.abs(v) / ROW_HEIGHT);
+          if (slot !== lastSlot) { lastSlot = slot; play("tick"); }
+        },
+      });
+      finalControls.then(() => {
+        if (!mounted) return;
+        setLocalPhase("stopped");
+        play("stop");
+        onStopped?.();
+      });
+    });
+
+    return () => {
+      mounted = false;
+      spinControls.stop();
+    };
+  }, [isSpinning, resultName]);
+
+  const isStopped = localPhase === "stopped";
+
+  return h("div", { className: "relative", style: { height: ROW_HEIGHT * VISIBLE } },
+    /* 上下グラデマスク */
+    h("div", {
+      className: "pointer-events-none absolute inset-0 z-20",
+      style: {
+        background:
+          "linear-gradient(180deg, rgba(5,6,14,1) 0%, rgba(5,6,14,0.4) 20%, rgba(5,6,14,0) 40%, rgba(5,6,14,0) 60%, rgba(5,6,14,0.4) 80%, rgba(5,6,14,1) 100%)",
+      }
+    }),
+    /* ウィナーライン */
+    h("div", {
+      className: "pointer-events-none absolute left-0 right-0 z-10",
+      style: { top: ROW_HEIGHT * 2, height: ROW_HEIGHT },
+    },
+      h("div", { className: "absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300 to-transparent" }),
+      h("div", { className: "absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-cyan-300 to-transparent" }),
+      h(motion.div, {
+        className: "absolute inset-0",
+        animate: {
+          boxShadow: isStopped
+            ? ["inset 0 0 0 2px rgba(245,255,61,0.9)", "inset 0 0 40px rgba(245,255,61,0.3)"]
+            : "inset 0 0 20px rgba(0,240,255,0.18)",
+        },
+        transition: { duration: 0.3 },
+      })
+    ),
+    /* 回転ドラム */
+    h(motion.div, { style: { y }, className: "relative", },
+      h("div", { style: { paddingTop: ROW_HEIGHT * 2 } }),
+      ...reel.map((s, i) =>
+        h("div", {
+          key: `${s.id}-${i}`,
+          className: "flex items-center justify-center",
+          style: { height: ROW_HEIGHT, perspective: "600px" },
+        },
+          h(SlotRow, { name: s.name, isStopped, drumIndex })
+        )
+      )
+    )
+  );
+};
+
+/* ============================================================================
+ * Shockwave
+ * ========================================================================= */
+const Shockwave = ({ trigger, color = NEON.yellow }) =>
+  h(AnimatePresence, null,
+    trigger && h(React.Fragment, null,
+      ...[0, 0.12, 0.24].map((delay, idx) =>
+        h(motion.div, {
+          key: idx,
+          className: "pointer-events-none fixed left-1/2 top-1/2 z-50 rounded-full",
+          style: { border: `2px solid ${color}`, boxShadow: `0 0 60px ${color}` },
+          initial: { width: 0, height: 0, x: "-50%", y: "-50%", opacity: 0.9 },
+          animate: { width: "180vmax", height: "180vmax", opacity: 0 },
+          transition: { duration: 1.1, delay, ease: [0.16, 1, 0.3, 1] },
+          exit: { opacity: 0 },
+        })
+      ),
+      h(motion.div, {
+        className: "pointer-events-none fixed inset-0 z-40 bg-white",
+        initial: { opacity: 0 },
+        animate: { opacity: [0, 0.35, 0] },
+        transition: { duration: 0.35 },
+        exit: { opacity: 0 },
+      })
+    )
+  );
+
+/* ============================================================================
+ * Position Badge
+ * ========================================================================= */
+const PositionBadge = ({ position, total }) => {
+  // 発表順が進むほど暖色→寒色に。色自体に優劣の意味はない、単なる視覚的リズム。
+  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
+  const color = palette[(position - 1) % palette.length];
+  return h("div", { className: "flex items-center gap-3" },
+    h("div", {
+      className: "flex h-10 w-10 items-center justify-center rounded border",
+      style: { borderColor: color, boxShadow: `0 0 20px ${color}66` },
+    },
+      h("span", {
+        className: "font-display text-sm font-black",
+        style: { color }
+      }, String(position).padStart(2, "0"))
+    ),
+    h("div", null,
+      h("div", { className: "font-mono text-[10px] tracking-widest text-white/50" }, "PRESENTATION ORDER"),
+      h("div", { className: "font-display text-3xl font-black leading-none", style: { color } },
+        `#${String(position).padStart(2, "0")}`,
+        h("span", { className: "font-mono text-sm text-white/30" }, ` / ${String(total).padStart(2, "0")}`)
+      )
+    )
+  );
+};
+
+/* ============================================================================
+ * Slot Section
+ * ========================================================================= */
+const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive }) => {
+  const currentTarget = ranking[currentIdx];
+  const [shock, setShock] = useState(false);
+
+  const handleStopped = () => {
+    setShock(true);
+    setTimeout(() => setShock(false), 700);
+    setTimeout(() => onFinishPosition(), 350);
+  };
+
+  return h("section", { className: "relative" },
+    h(PanelHeader, {
+      icon: h(Zap, { className: "h-4 w-4" }),
+      label: "KINETIC SLOT ENGINE",
+      sublabel: isActive ? `DRAWING POSITION #${currentIdx + 1}` : "STANDBY",
+    }),
+    h("div", { className: "glass relative mt-3 overflow-hidden p-6" },
+      h("div", { className: "absolute left-0 top-0 h-full w-[3px] bg-gradient-to-b from-cyan-400 via-pink-500 to-yellow-300 opacity-80" }),
+      h("div", { className: "absolute right-0 top-0 h-full w-[3px] bg-gradient-to-b from-yellow-300 via-pink-500 to-cyan-400 opacity-80" }),
+      h("div", { className: "mb-5 flex items-center justify-between" },
+        h(PositionBadge, { position: currentIdx + 1, total: schools.length }),
+        h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-cyan-300/70" },
+          `TARGET ▸ ${currentTarget ? "LOCKED" : "—"}`
+        )
+      ),
+      h("div", { "data-slot-viewport": true, className: "relative" },
+        currentTarget && h(SlotDrum, {
+          key: currentIdx,
+          pool: schools,
+          isSpinning: isActive,
+          resultName: currentTarget.name,
+          onStopped: handleStopped,
+          drumIndex: currentIdx,
+        })
+      )
+    ),
+    h(Shockwave, {
+      trigger: shock,
+      color: currentIdx === 0 ? NEON.yellow : currentIdx === 1 ? NEON.cyan : NEON.magenta,
+    })
+  );
+};
+
+/* ============================================================================
+ * Full-Screen Order Display（全画面で発表順を表示）
+ * ========================================================================= */
+const FullScreenOrderDisplay = ({ ranking, onClose }) => {
+  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
+  const accent = (i) => palette[i % palette.length];
+
+  // 校数に応じてグリッドの列数を動的決定
+  const cols = ranking.length <= 4 ? 1
+            : ranking.length <= 8 ? 2
+            : ranking.length <= 15 ? 3
+            : 4;
+
+  // 校数に応じて文字サイズも動的に
+  const sizeClass = ranking.length <= 4 ? "text-5xl md:text-7xl"
+                  : ranking.length <= 8 ? "text-3xl md:text-5xl"
+                  : ranking.length <= 15 ? "text-2xl md:text-3xl"
+                  : "text-xl md:text-2xl";
+  const numSizeClass = ranking.length <= 4 ? "text-7xl md:text-9xl"
+                     : ranking.length <= 8 ? "text-5xl md:text-7xl"
+                     : ranking.length <= 15 ? "text-4xl md:text-5xl"
+                     : "text-3xl md:text-4xl";
+
+  return h(motion.div, {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+    transition: { duration: 0.4 },
+    className: "fixed inset-0 z-[60] overflow-y-auto bg-[#05060E]",
+  },
+    /* 背景（同じBackdropを再利用したい感じのグラデ） */
+    h("div", {
+      className: "pointer-events-none fixed inset-0",
+      style: {
+        background:
+          "radial-gradient(ellipse at 20% 0%, rgba(0,240,255,0.2) 0%, transparent 45%)," +
+          "radial-gradient(ellipse at 80% 100%, rgba(255,46,154,0.2) 0%, transparent 45%)," +
+          "linear-gradient(180deg, #05060E 0%, #0A0B1A 50%, #05060E 100%)",
+      }
+    }),
+
+    /* ヘッダー */
+    h("div", { className: "relative z-10 border-b border-cyan-500/20 backdrop-blur-sm" },
+      h("div", { className: "mx-auto flex max-w-[1600px] items-center justify-between px-8 py-5" },
+        h("div", null,
+          h("div", { className: "font-mono text-[10px] tracking-[0.4em] text-cyan-400/80" },
+            "▸ FINAL ORDER FIXED"),
+          h("div", { className: "font-jp text-2xl font-black tracking-wide text-white mt-1" },
+            "発表順番　決定"
+          )
+        ),
+        h("button", {
+          onClick: onClose,
+          className: "neon-btn neon-btn--cyan flex items-center gap-2",
+        },
+          h(X, { className: "h-4 w-4" }),
+          "CLOSE"
+        )
+      )
+    ),
+
+    /* メイン：全順位グリッド */
+    h("div", { className: "relative z-10 mx-auto max-w-[1600px] px-8 py-10" },
+      h("div", {
+        className: "grid gap-4",
+        style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` },
+      },
+        ...ranking.map((s, i) =>
+          h(motion.div, {
+            key: s.id,
+            initial: { opacity: 0, y: 30, scale: 0.92 },
+            animate: { opacity: 1, y: 0, scale: 1 },
+            transition: {
+              type: "spring",
+              stiffness: 180,
+              damping: 20,
+              delay: i * 0.06, // 1つずつタイミングをずらして登場
+            },
+            className: "relative overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.04] to-transparent p-5 md:p-6",
+            style: {
+              boxShadow: `inset 4px 0 0 ${accent(i)}, 0 0 0 1px rgba(255,255,255,0.03)`,
+            }
+          },
+            /* 背景の巨大な番号 */
+            h("div", {
+              className: "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-display font-black leading-none opacity-[0.08]",
+              style: {
+                fontSize: cols === 1 ? "240px" : cols === 2 ? "180px" : "120px",
+                color: accent(i),
+              }
+            }, String(i + 1).padStart(2, "0")),
+
+            /* 前景 */
+            h("div", { className: "relative flex items-center gap-5" },
+              h("div", {
+                className: `font-display font-black leading-none ${numSizeClass}`,
+                style: {
+                  color: accent(i),
+                  textShadow: `0 0 20px ${accent(i)}99, 0 0 40px ${accent(i)}44`,
+                }
+              }, String(i + 1).padStart(2, "0")),
+              h("div", { className: "min-w-0 flex-1" },
+                h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-white/50" },
+                  `ORDER ${String(i + 1).padStart(2, "0")}`
+                ),
+                h("div", {
+                  className: `font-jp font-black text-white break-words ${sizeClass}`,
+                  style: { textShadow: "0 2px 20px rgba(0,0,0,0.8)" }
+                }, s.name)
+              )
+            )
+          )
+        )
+      ),
+
+      /* フッターの案内 */
+      h("div", { className: "mt-10 text-center font-mono text-[11px] tracking-[0.3em] text-white/30" },
+        `TOTAL ${ranking.length} PRESENTERS — この画面は右上「CLOSE」で閉じられます`
+      )
+    )
+  );
+};
+
+/* ============================================================================
+ * Results Board
+ * ========================================================================= */
+const ResultsBoard = ({ revealed, total }) => {
+  // 発表順による色の違いは「リズム」のためだけ。優劣の意味はない。
+  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
+  const accent = (i) => palette[i % palette.length];
+
+  return h("section", null,
+    h(PanelHeader, {
+      icon: h(Mic2, { className: "h-4 w-4" }),
+      label: "PRESENTATION ORDER",
+      sublabel: `${revealed.length} / ${total} DECIDED`,
+    }),
+    h("div", { className: "glass mt-3 p-5" },
+      revealed.length === 0
+        ? h("div", { className: "py-8 text-center font-mono text-xs tracking-wider text-white/30" },
+            "AWAITING FIRST RESULT...")
+        : h("ol", { className: "space-y-1.5 max-h-[60vh] overflow-y-auto pr-1" },
+            h(AnimatePresence, null,
+              ...revealed.map((s, i) =>
+                h(motion.li, {
+                  key: s.id,
+                  layout: true,
+                  initial: { opacity: 0, x: -40, scale: 0.9 },
+                  animate: { opacity: 1, x: 0, scale: 1 },
+                  transition: { type: "spring", stiffness: 180, damping: 20 },
+                  className: "relative flex items-center gap-4 overflow-hidden rounded border border-white/10 bg-gradient-to-r from-white/[0.03] to-transparent px-4 py-3",
+                  style: { boxShadow: `inset 3px 0 0 ${accent(i)}` },
+                },
+                  h("div", {
+                    className: "font-display text-3xl font-black leading-none",
+                    style: { color: accent(i), textShadow: `0 0 12px ${accent(i)}66` }
+                  }, String(i + 1).padStart(2, "0")),
+                  h("div", { className: "flex-1" },
+                    h("div", { className: "font-jp text-lg font-bold tracking-wide text-white" }, s.name),
+                    h("div", { className: "font-mono text-[10px] tracking-widest text-white/40" },
+                      i === 0 ? "FIRST PRESENTER" : `ORDER ${i + 1}`
+                    )
+                  ),
+                  h("div", {
+                    className: "flex h-8 w-8 items-center justify-center rounded-full",
+                    style: { background: `${accent(i)}22`, border: `1px solid ${accent(i)}` }
+                  },
+                    h(Mic2, { className: "h-4 w-4", style: { color: accent(i) } })
+                  )
+                )
+              )
+            )
+          )
+    )
+  );
+};
+
+/* ============================================================================
+ * Root App
+ * ========================================================================= */
+const SAMPLE = ["松山東高校", "新居浜西高校", "今治西高校", "宇和島南高校", "西条農業高校"];
+
+const App = () => {
+  const [schools, setSchools] = useState(
+    SAMPLE.map((name) => ({ id: makeId(), name }))
+  );
+  const [phase, setPhase] = useState("setup");
+  const [ranking, setRanking] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [showFullScreen, setShowFullScreen] = useState(false);
+
+  const revealed = ranking.slice(0, currentIdx);
+  const statusLabel =
+    phase === "setup" ? "READY" : phase === "drawing" ? "DRAWING" : "COMPLETE";
+
+  const start = () => {
+    if (schools.length < 2) return;
+    const r = generateRanking(schools);
+    setRanking(r);
+    setCurrentIdx(0);
+    setPhase("drawing");
+  };
+
+  const onFinishPosition = () => {
+    const next = currentIdx + 1;
+    if (next >= ranking.length) {
+      setCurrentIdx(next);
+      setPhase("finished");
+      // 全順番決定後、少し余韻をおいて全画面表示
+      setTimeout(() => setShowFullScreen(true), 900);
+    } else {
+      setCurrentIdx(next);
+    }
+  };
+
+  const reset = () => {
+    setRanking([]);
+    setCurrentIdx(0);
+    setPhase("setup");
+    setShowFullScreen(false);
+  };
+
+  return h("div", { className: "relative min-h-screen overflow-x-hidden bg-[#05060E] text-white" },
+    h(Backdrop),
+    h(HeaderHUD, { schoolCount: schools.length, statusLabel }),
+    h("main", { className: "relative z-10 mx-auto max-w-6xl px-6 py-8" },
+      /* タイトルブロック */
+      h("div", { className: "mb-10 flex flex-col items-start gap-6 md:flex-row md:items-end md:justify-between" },
+        h("div", null,
+          h(motion.div, {
+            initial: { opacity: 0, y: 20 },
+            animate: { opacity: 1, y: 0 },
+            className: "font-mono text-xs tracking-[0.4em] text-cyan-400/70",
+          }, "▸ AGRICULTURE CLUB PRESENTATION DRAFT"),
+          h(motion.h1, {
+            initial: { opacity: 0, y: 30 },
+            animate: { opacity: 1, y: 0 },
+            transition: { delay: 0.08 },
+            className: "font-jp font-black leading-[0.95] tracking-tight text-[44px] md:text-[64px]",
+            style: {
+              background:
+                "linear-gradient(180deg, #ffffff 0%, #ffffff 50%, #00F0FF 70%, #FF2E9A 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              filter: "drop-shadow(0 4px 30px rgba(0,240,255,0.25))",
+            }
+          }, "農業クラブ", h("br"), "発表順番決め", h("br"), "ルーレット"),
+          h(motion.div, {
+            initial: { opacity: 0 },
+            animate: { opacity: 1 },
+            transition: { delay: 0.2 },
+            className: "mt-3 font-mono text-xs tracking-[0.3em] text-white/40",
+          }, "PRESENTATION ORDER RANDOMIZER")
+        ),
+        h("div", { className: "flex items-center gap-3" },
+          phase === "setup" && h(motion.button, {
+            whileHover: { scale: 1.02 },
+            whileTap: { scale: 0.97 },
+            onClick: start,
+            disabled: schools.length < 2,
+            className: "neon-btn neon-btn--yellow flex items-center gap-2",
+          },
+            h(Play, { className: "h-4 w-4 fill-current" }),
+            "START DRAFT"
+          ),
+          (phase === "drawing" || phase === "finished") && h(motion.button, {
+            whileHover: { scale: 1.02 },
+            whileTap: { scale: 0.97 },
+            onClick: reset,
+            className: "neon-btn neon-btn--cyan flex items-center gap-2",
+          },
+            h(RotateCcw, { className: "h-4 w-4" }),
+            "NEW DRAFT"
+          ),
+          phase === "finished" && h(motion.button, {
+            whileHover: { scale: 1.02 },
+            whileTap: { scale: 0.97 },
+            onClick: () => setShowFullScreen(true),
+            className: "neon-btn neon-btn--yellow flex items-center gap-2",
+          },
+            h(Maximize2, { className: "h-4 w-4" }),
+            "全画面表示"
+          )
+        )
+      ),
+      /* メインレイアウト */
+      h("div", { className: "grid gap-8 lg:grid-cols-[1fr_1.1fr]" },
+        h("div", null,
+          phase === "setup"
+            ? h(SchoolRegistry, { schools, setSchools, disabled: false })
+            : h(SlotSection, {
+                schools,
+                ranking,
+                currentIdx: Math.min(currentIdx, ranking.length - 1),
+                onFinishPosition,
+                isActive: phase === "drawing" && currentIdx < ranking.length,
+              })
+        ),
+        h("div", null,
+          h(ResultsBoard, { revealed, total: ranking.length || schools.length })
+        )
+      ),
+      /* フッター */
+      h("footer", { className: "mt-16 flex items-center justify-between border-t border-white/5 pt-6 font-mono text-[10px] tracking-[0.3em] text-white/30" },
+        h("div", null, "© KINETIC::DRAFT — BUILT WITH REACT + FRAMER MOTION"),
+        h("div", null, "SYS.READY")
+      )
+    ),
+
+    /* 全画面表示オーバーレイ */
+    h(AnimatePresence, null,
+      showFullScreen && h(FullScreenOrderDisplay, {
+        ranking,
+        onClose: () => setShowFullScreen(false),
+      })
+    )
+  );
+};
+
+// --- エラーを画面に表示する安全装置 ---
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error("[KineticDraft] ", err, info); }
+  render() {
+    if (this.state.err) {
+      return h("div", {
+        style: {
+          padding: "24px", margin: "24px", borderRadius: "8px",
+          background: "#200", color: "#fcc", fontFamily: "monospace",
+          border: "1px solid #f55", whiteSpace: "pre-wrap"
+        }
+      },
+        h("div", { style: { fontWeight: 700, marginBottom: 12, color: "#f88" } }, "⚠ RUNTIME ERROR"),
+        String(this.state.err?.stack || this.state.err)
+      );
+    }
+    return this.props.children;
+  }
+}
+
+createRoot(document.getElementById("root")).render(h(ErrorBoundary, null, h(App)));
+</script>
+</body>
+</html>
