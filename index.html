@@ -160,28 +160,224 @@ import { motion, AnimatePresence, useMotionValue, animate } from "framer-motion"
 import {
   Zap, Plus, X, Upload, Play, RotateCcw, GripVertical,
   Radio, Activity, Target, Mic2, Shuffle, Maximize2,
+  Pencil, Check, Volume2, VolumeX, Download,
 } from "lucide-react";
 
 const h = React.createElement;
 
 /* ============================================================================
- * SOUND ENGINE (Web Audio API hook - 音は出さないが設計は完備)
+ * SOUND ENGINE (Web Audio API — Cyber-Athletic SFX)
+ *   Events:
+ *     tick    : ドラムが1コマ進むカチッという高域ブリップ
+ *     spin    : ドラム回転中の低域ランブル + 帯域掃引ノイズ
+ *     stop    : 停止時の重低音サブ + 高域スナップ
+ *     impact  : Shockwave 発動時のサブブーム + ホワイトノイズクラッシュ
+ *     fanfare : 最終確定時のアルペジオ + ネオンパッド
  * ========================================================================= */
+let _audioCtx = null;
+let _master = null;
+let _muted = false;
+
+const _getAudio = () => {
+  if (typeof window === "undefined") return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!_audioCtx) {
+    _audioCtx = new AC();
+    _master = _audioCtx.createGain();
+    _master.gain.value = _muted ? 0 : 0.5;
+    // 軽いリミッター代わりのソフトコンプレッサー
+    const comp = _audioCtx.createDynamicsCompressor();
+    comp.threshold.value = -12;
+    comp.knee.value = 12;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.15;
+    _master.connect(comp).connect(_audioCtx.destination);
+  }
+  if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+  return { ctx: _audioCtx, master: _master };
+};
+
+const setSoundMuted = (m) => {
+  _muted = !!m;
+  if (_master && _audioCtx) {
+    const now = _audioCtx.currentTime;
+    _master.gain.cancelScheduledValues(now);
+    _master.gain.linearRampToValueAtTime(_muted ? 0 : 0.5, now + 0.05);
+  }
+};
+
+const _noiseBuffer = (ctx, seconds, decay = false) => {
+  const len = Math.floor(ctx.sampleRate * seconds);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const env = decay ? 1 - i / len : 1;
+    data[i] = (Math.random() * 2 - 1) * env;
+  }
+  return buf;
+};
+
+const playSfx = (event) => {
+  if (_muted) return;
+  const audio = _getAudio();
+  if (!audio) return;
+  const { ctx, master } = audio;
+  const t = ctx.currentTime;
+
+  if (event === "tick") {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(1500, t);
+    osc.frequency.exponentialRampToValueAtTime(650, t + 0.04);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.14, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    osc.connect(gain).connect(master);
+    osc.start(t); osc.stop(t + 0.06);
+    return;
+  }
+
+  if (event === "spin") {
+    // 帯域掃引ノイズ（シューッという風切り音）
+    const src = ctx.createBufferSource();
+    src.buffer = _noiseBuffer(ctx, 1.3);
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass"; bp.Q.value = 7;
+    bp.frequency.setValueAtTime(350, t);
+    bp.frequency.exponentialRampToValueAtTime(4200, t + 1.1);
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.0001, t);
+    nGain.gain.exponentialRampToValueAtTime(0.22, t + 0.15);
+    nGain.gain.exponentialRampToValueAtTime(0.01, t + 1.2);
+    src.connect(bp).connect(nGain).connect(master);
+    src.start(t); src.stop(t + 1.3);
+
+    // 低域ランブル（唸るエンジン感）
+    const osc = ctx.createOscillator();
+    const oGain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(55, t);
+    osc.frequency.exponentialRampToValueAtTime(130, t + 1.0);
+    oGain.gain.setValueAtTime(0.0001, t);
+    oGain.gain.exponentialRampToValueAtTime(0.16, t + 0.2);
+    oGain.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+    osc.connect(oGain).connect(master);
+    osc.start(t); osc.stop(t + 1.25);
+    return;
+  }
+
+  if (event === "stop") {
+    // 低域サブ（ドンッ）
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(220, t);
+    sub.frequency.exponentialRampToValueAtTime(42, t + 0.25);
+    subG.gain.setValueAtTime(0.0001, t);
+    subG.gain.exponentialRampToValueAtTime(0.55, t + 0.008);
+    subG.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    sub.connect(subG).connect(master);
+    sub.start(t); sub.stop(t + 0.45);
+
+    // 高域スナップ（カシャッ）
+    const snap = ctx.createOscillator();
+    const snapG = ctx.createGain();
+    snap.type = "square";
+    snap.frequency.setValueAtTime(980, t);
+    snap.frequency.exponentialRampToValueAtTime(420, t + 0.12);
+    snapG.gain.setValueAtTime(0.0001, t);
+    snapG.gain.exponentialRampToValueAtTime(0.18, t + 0.004);
+    snapG.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+    snap.connect(snapG).connect(master);
+    snap.start(t); snap.stop(t + 0.2);
+    return;
+  }
+
+  if (event === "impact") {
+    // サブブーム
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(140, t);
+    sub.frequency.exponentialRampToValueAtTime(28, t + 0.55);
+    subG.gain.setValueAtTime(0.0001, t);
+    subG.gain.exponentialRampToValueAtTime(0.7, t + 0.01);
+    subG.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+    sub.connect(subG).connect(master);
+    sub.start(t); sub.stop(t + 0.7);
+
+    // ホワイトノイズクラッシュ
+    const src = ctx.createBufferSource();
+    src.buffer = _noiseBuffer(ctx, 0.5, true);
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass"; hp.frequency.value = 1800;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.45, t);
+    nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    src.connect(hp).connect(nGain).connect(master);
+    src.start(t);
+    return;
+  }
+
+  if (event === "fanfare") {
+    // ネオンパッド（C メジャー）
+    [261.63, 329.63, 392.0, 523.25].forEach((f) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(f, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.11, t + 0.25);
+      g.gain.setValueAtTime(0.11, t + 1.2);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 2.0);
+      o.connect(g).connect(master);
+      o.start(t); o.stop(t + 2.1);
+    });
+
+    // 上昇アルペジオ（sawtooth + lowpass）
+    const arp = [
+      { f: 523.25, dt: 0.0  },
+      { f: 659.25, dt: 0.10 },
+      { f: 783.99, dt: 0.20 },
+      { f: 1046.5, dt: 0.30 },
+      { f: 1318.5, dt: 0.42 },
+      { f: 1567.98, dt: 0.54 },
+      { f: 2093.0, dt: 0.70 },
+    ];
+    arp.forEach(({ f, dt }) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 4500;
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(f, t + dt);
+      g.gain.setValueAtTime(0.0001, t + dt);
+      g.gain.exponentialRampToValueAtTime(0.2, t + dt + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dt + 0.45);
+      o.connect(lp).connect(g).connect(master);
+      o.start(t + dt); o.stop(t + dt + 0.5);
+    });
+
+    // 最後にドン
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(90, t + 0.85);
+    sub.frequency.exponentialRampToValueAtTime(35, t + 1.6);
+    subG.gain.setValueAtTime(0.0001, t + 0.85);
+    subG.gain.exponentialRampToValueAtTime(0.55, t + 0.87);
+    subG.gain.exponentialRampToValueAtTime(0.001, t + 1.7);
+    sub.connect(subG).connect(master);
+    sub.start(t + 0.85); sub.stop(t + 1.75);
+    return;
+  }
+};
+
 const useSoundEngine = () => {
-  const ctxRef = useRef(null);
-  const ensureCtx = useCallback(() => {
-    if (typeof window === "undefined") return null;
-    // 実際に鳴らす場合:
-    // if (!ctxRef.current) ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    return ctxRef.current;
-  }, []);
-  const play = useCallback((event) => {
-    ensureCtx();
-    // event: "tick" | "spin" | "stop" | "impact" | "fanfare"
-    if (typeof window !== "undefined" && window.__DEBUG_SOUND__) {
-      console.debug(`[SFX] ${event}`);
-    }
-  }, [ensureCtx]);
+  const play = useCallback((event) => playSfx(event), []);
   return { play };
 };
 
@@ -209,6 +405,61 @@ const NEON = {
 const makeId = () => {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+};
+
+/* ============================================================================
+ * Persistence (localStorage)
+ * ========================================================================= */
+const STORAGE_SCHOOLS = "kineticdraft.schools.v1";
+const STORAGE_MUTED = "kineticdraft.muted.v1";
+
+const loadSchools = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_SCHOOLS);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return null;
+    return data
+      .filter((x) => x && typeof x.name === "string" && x.name.trim())
+      .map((x) => ({ id: typeof x.id === "string" ? x.id : makeId(), name: x.name }));
+  } catch { return null; }
+};
+
+const saveSchools = (list) => {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_SCHOOLS, JSON.stringify(list)); } catch {}
+};
+
+const loadMuted = () => {
+  if (typeof window === "undefined") return false;
+  try { return window.localStorage.getItem(STORAGE_MUTED) === "1"; } catch { return false; }
+};
+
+const saveMuted = (m) => {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_MUTED, m ? "1" : "0"); } catch {}
+};
+
+/* ============================================================================
+ * CSV Export
+ * ========================================================================= */
+const downloadRankingCsv = (ranking) => {
+  const rows = [["順番", "高校名"]];
+  ranking.forEach((s, i) => rows.push([String(i + 1), s.name]));
+  const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  // BOM 付きで Excel の日本語文字化けを回避
+  const csv = "\uFEFF" + rows.map((r) => r.map(escape).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  a.href = url;
+  a.download = `presentation-order-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 };
 
 /* ============================================================================
@@ -263,7 +514,7 @@ const Readout = ({ icon, label, value, pulse }) =>
     h("span", { className: `text-cyan-300 ${pulse ? "animate-pulse" : ""}` }, value)
   );
 
-const HeaderHUD = ({ schoolCount, statusLabel }) =>
+const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute }) =>
   h("header", { className: "relative z-20 border-b border-cyan-500/20 backdrop-blur-md" },
     h("div", { className: "mx-auto flex max-w-6xl items-center justify-between px-6 py-4" },
       h("div", { className: "flex items-center gap-3" },
@@ -289,7 +540,21 @@ const HeaderHUD = ({ schoolCount, statusLabel }) =>
       ),
       h("div", { className: "flex items-center gap-6" },
         h(Readout, { icon: h(Radio, { className: "h-3 w-3" }), label: "ENTRIES", value: String(schoolCount).padStart(2, "0") }),
-        h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true })
+        h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true }),
+        h("button", {
+          onClick: onToggleMute,
+          "aria-label": muted ? "サウンドをオンにする" : "サウンドをミュート",
+          title: muted ? "SOUND OFF" : "SOUND ON",
+          className: `flex h-8 w-8 items-center justify-center rounded border transition ${
+            muted
+              ? "border-white/20 text-white/40 hover:border-white/40 hover:text-white/70"
+              : "border-cyan-400/60 text-cyan-300 hover:bg-cyan-400/10 hover:shadow-[0_0_15px_rgba(0,240,255,0.4)]"
+          }`,
+        },
+          muted
+            ? h(VolumeX, { className: "h-4 w-4" })
+            : h(Volume2, { className: "h-4 w-4" })
+        )
       )
     )
   );
@@ -322,6 +587,8 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
   const [showBulk, setShowBulk] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
 
   const addOne = () => {
     const name = input.trim();
@@ -344,6 +611,22 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
   };
 
   const remove = (id) => setSchools(schools.filter((s) => s.id !== id));
+
+  const startEdit = (s) => {
+    if (disabled) return;
+    setEditingId(s.id);
+    setEditValue(s.name);
+  };
+  const cancelEdit = () => { setEditingId(null); setEditValue(""); };
+  const commitEdit = () => {
+    const name = editValue.trim();
+    if (!name || !editingId) { cancelEdit(); return; }
+    if (schools.some((s) => s.name === name && s.id !== editingId)) {
+      cancelEdit(); return;
+    }
+    setSchools(schools.map((s) => (s.id === editingId ? { ...s, name } : s)));
+    cancelEdit();
+  };
 
   const handleDragStart = (i) => setDragIdx(i);
   const handleDragOver = (e, i) => { e.preventDefault(); setHoverIdx(i); };
@@ -431,37 +714,72 @@ const SchoolRegistry = ({ schools, setSchools, disabled }) => {
             onDragEnd: handleDrop,
           },
             h(AnimatePresence, null,
-              ...schools.map((s, i) =>
-                h(motion.li, {
+              ...schools.map((s, i) => {
+                const isEditing = editingId === s.id;
+                return h(motion.li, {
                   key: s.id,
                   layout: true,
                   initial: { opacity: 0, x: -20 },
                   animate: { opacity: 1, x: 0 },
                   exit: { opacity: 0, x: 20, transition: { duration: 0.15 } },
-                  draggable: !disabled,
+                  draggable: !disabled && !isEditing,
                   onDragStart: () => handleDragStart(i),
                   onDragOver: (e) => handleDragOver(e, i),
                   className: `group relative flex items-center gap-3 rounded border px-3 py-2.5 transition-all ${
-                    hoverIdx === i && dragIdx !== null
+                    isEditing
+                      ? "border-cyan-400 bg-cyan-400/5"
+                      : hoverIdx === i && dragIdx !== null
                       ? "border-cyan-400 bg-cyan-400/10"
                       : "border-white/10 bg-white/[0.02] hover:border-cyan-500/40 hover:bg-cyan-500/5"
                   }`,
                 },
-                  h(GripVertical, { className: "h-4 w-4 cursor-grab text-white/30 group-hover:text-cyan-400" }),
+                  h(GripVertical, {
+                    className: `h-4 w-4 ${isEditing ? "text-white/10" : "cursor-grab text-white/30 group-hover:text-cyan-400"}`
+                  }),
                   h("span", { className: "font-mono text-[10px] tracking-wider text-cyan-400/60" },
                     `#${String(i + 1).padStart(2, "0")}`
                   ),
-                  h("span", { className: "flex-1 font-jp text-[15px] tracking-wide text-white" }, s.name),
+                  isEditing
+                    ? h("input", {
+                        autoFocus: true,
+                        value: editValue,
+                        onChange: (e) => setEditValue(e.target.value),
+                        onKeyDown: (e) => {
+                          if (e.key === "Enter") commitEdit();
+                          else if (e.key === "Escape") cancelEdit();
+                        },
+                        onBlur: commitEdit,
+                        className: "flex-1 rounded-sm border border-cyan-400/60 bg-black/50 px-2 py-1 font-jp text-[15px] tracking-wide text-cyan-100 outline-none focus:shadow-[0_0_0_3px_rgba(0,240,255,0.15)]",
+                      })
+                    : h("span", {
+                        className: "flex-1 font-jp text-[15px] tracking-wide text-white cursor-text",
+                        onDoubleClick: () => startEdit(s),
+                        title: "ダブルクリックで編集",
+                      }, s.name),
+                  isEditing
+                    ? h("button", {
+                        onMouseDown: (e) => e.preventDefault(),
+                        onClick: commitEdit,
+                        className: "text-cyan-300 transition hover:text-cyan-200",
+                        "aria-label": "保存",
+                      }, h(Check, { className: "h-4 w-4" }))
+                    : h("button", {
+                        onClick: () => startEdit(s),
+                        disabled,
+                        className: "text-white/30 transition hover:text-cyan-400",
+                        "aria-label": "編集",
+                      }, h(Pencil, { className: "h-4 w-4" })),
                   h("button", {
-                    onClick: () => remove(s.id),
+                    onClick: () => { if (isEditing) cancelEdit(); else remove(s.id); },
+                    onMouseDown: isEditing ? (e) => e.preventDefault() : undefined,
                     disabled,
                     className: "text-white/30 transition hover:text-pink-400",
-                    "aria-label": "remove",
+                    "aria-label": isEditing ? "キャンセル" : "削除",
                   },
                     h(X, { className: "h-4 w-4" })
                   )
-                )
-              )
+                );
+              })
             )
           )
       )
@@ -687,9 +1005,11 @@ const PositionBadge = ({ position, total }) => {
 const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive }) => {
   const currentTarget = ranking[currentIdx];
   const [shock, setShock] = useState(false);
+  const { play } = useSoundEngine();
 
   const handleStopped = () => {
     setShock(true);
+    play("impact");
     setTimeout(() => setShock(false), 700);
     setTimeout(() => onFinishPosition(), 350);
   };
@@ -730,7 +1050,7 @@ const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive 
 /* ============================================================================
  * Full-Screen Order Display（全画面で発表順を表示）
  * ========================================================================= */
-const FullScreenOrderDisplay = ({ ranking, onClose }) => {
+const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
   const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
   const accent = (i) => palette[i % palette.length];
 
@@ -778,12 +1098,21 @@ const FullScreenOrderDisplay = ({ ranking, onClose }) => {
             "発表順番　決定"
           )
         ),
-        h("button", {
-          onClick: onClose,
-          className: "neon-btn neon-btn--cyan flex items-center gap-2",
-        },
-          h(X, { className: "h-4 w-4" }),
-          "CLOSE"
+        h("div", { className: "flex items-center gap-3" },
+          onExportCsv && h("button", {
+            onClick: onExportCsv,
+            className: "neon-btn neon-btn--magenta flex items-center gap-2",
+          },
+            h(Download, { className: "h-4 w-4" }),
+            "CSV EXPORT"
+          ),
+          h("button", {
+            onClick: onClose,
+            className: "neon-btn neon-btn--cyan flex items-center gap-2",
+          },
+            h(X, { className: "h-4 w-4" }),
+            "CLOSE"
+          )
         )
       )
     ),
@@ -910,13 +1239,32 @@ const ResultsBoard = ({ revealed, total }) => {
 const SAMPLE = ["松山東高校", "新居浜西高校", "今治西高校", "宇和島南高校", "西条農業高校"];
 
 const App = () => {
-  const [schools, setSchools] = useState(
-    SAMPLE.map((name) => ({ id: makeId(), name }))
-  );
+  const [schools, setSchools] = useState(() => {
+    const saved = loadSchools();
+    if (saved !== null) return saved;
+    return SAMPLE.map((name) => ({ id: makeId(), name }));
+  });
   const [phase, setPhase] = useState("setup");
   const [ranking, setRanking] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [showFullScreen, setShowFullScreen] = useState(false);
+  const [muted, setMuted] = useState(() => loadMuted());
+
+  // Persist schools
+  useEffect(() => { saveSchools(schools); }, [schools]);
+
+  // Sync mute state with audio engine
+  useEffect(() => {
+    setSoundMuted(muted);
+    saveMuted(muted);
+  }, [muted]);
+
+  // Play fanfare when all positions are decided
+  useEffect(() => {
+    if (phase !== "finished") return;
+    const id = setTimeout(() => playSfx("fanfare"), 400);
+    return () => clearTimeout(id);
+  }, [phase]);
 
   const revealed = ranking.slice(0, currentIdx);
   const statusLabel =
@@ -949,9 +1297,19 @@ const App = () => {
     setShowFullScreen(false);
   };
 
+  const exportCsv = () => {
+    if (ranking.length === 0) return;
+    downloadRankingCsv(ranking);
+  };
+
   return h("div", { className: "relative min-h-screen overflow-x-hidden bg-[#05060E] text-white" },
     h(Backdrop),
-    h(HeaderHUD, { schoolCount: schools.length, statusLabel }),
+    h(HeaderHUD, {
+      schoolCount: schools.length,
+      statusLabel,
+      muted,
+      onToggleMute: () => setMuted((m) => !m),
+    }),
     h("main", { className: "relative z-10 mx-auto max-w-6xl px-6 py-8" },
       /* タイトルブロック */
       h("div", { className: "mb-10 flex flex-col items-start gap-6 md:flex-row md:items-end md:justify-between" },
@@ -1009,6 +1367,15 @@ const App = () => {
           },
             h(Maximize2, { className: "h-4 w-4" }),
             "全画面表示"
+          ),
+          phase === "finished" && h(motion.button, {
+            whileHover: { scale: 1.02 },
+            whileTap: { scale: 0.97 },
+            onClick: exportCsv,
+            className: "neon-btn neon-btn--magenta flex items-center gap-2",
+          },
+            h(Download, { className: "h-4 w-4" }),
+            "CSV EXPORT"
           )
         )
       ),
@@ -1041,6 +1408,7 @@ const App = () => {
       showFullScreen && h(FullScreenOrderDisplay, {
         ranking,
         onClose: () => setShowFullScreen(false),
+        onExportCsv: exportCsv,
       })
     )
   );
