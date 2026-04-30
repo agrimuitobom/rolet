@@ -228,72 +228,160 @@ const playSfx = (event) => {
   const t = ctx.currentTime;
 
   if (event === "tick") {
+    // 金属的アタック（高域ノイズバースト）
+    const nz = ctx.createBufferSource();
+    nz.buffer = _noiseBuffer(ctx, 0.04, true);
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass"; hp.frequency.value = 4500;
+    const nzG = ctx.createGain();
+    nzG.gain.setValueAtTime(0.18, t);
+    nzG.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
+    nz.connect(hp).connect(nzG).connect(master);
+    nz.start(t); nz.stop(t + 0.04);
+
+    // メタリックレゾナンス（square + bandpass で「キンッ」）
     const osc = ctx.createOscillator();
+    const bp = ctx.createBiquadFilter();
     const gain = ctx.createGain();
     osc.type = "square";
-    osc.frequency.setValueAtTime(1500, t);
-    osc.frequency.exponentialRampToValueAtTime(650, t + 0.04);
+    osc.frequency.setValueAtTime(2400, t);
+    osc.frequency.exponentialRampToValueAtTime(900, t + 0.05);
+    bp.type = "bandpass"; bp.Q.value = 12;
+    bp.frequency.setValueAtTime(2200, t);
+    bp.frequency.exponentialRampToValueAtTime(1100, t + 0.05);
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.14, t + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-    osc.connect(gain).connect(master);
-    osc.start(t); osc.stop(t + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.2, t + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    osc.connect(bp).connect(gain).connect(master);
+    osc.start(t); osc.stop(t + 0.08);
+
+    // 低域ボディ（ドゥッ）
+    const sub = ctx.createOscillator();
+    const subG = ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(180, t);
+    sub.frequency.exponentialRampToValueAtTime(70, t + 0.06);
+    subG.gain.setValueAtTime(0.0001, t);
+    subG.gain.exponentialRampToValueAtTime(0.16, t + 0.004);
+    subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    sub.connect(subG).connect(master);
+    sub.start(t); sub.stop(t + 0.09);
     return;
   }
 
   if (event === "spin") {
-    // 帯域掃引ノイズ（シューッという風切り音）
+    const dur = 1.4;
+    // 風切りノイズ（高Qバンドパス掃引）
     const src = ctx.createBufferSource();
-    src.buffer = _noiseBuffer(ctx, 1.3);
+    src.buffer = _noiseBuffer(ctx, dur);
     const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass"; bp.Q.value = 7;
-    bp.frequency.setValueAtTime(350, t);
-    bp.frequency.exponentialRampToValueAtTime(4200, t + 1.1);
+    bp.type = "bandpass"; bp.Q.value = 9;
+    bp.frequency.setValueAtTime(280, t);
+    bp.frequency.exponentialRampToValueAtTime(5200, t + dur - 0.1);
     const nGain = ctx.createGain();
     nGain.gain.setValueAtTime(0.0001, t);
-    nGain.gain.exponentialRampToValueAtTime(0.22, t + 0.15);
-    nGain.gain.exponentialRampToValueAtTime(0.01, t + 1.2);
+    nGain.gain.exponentialRampToValueAtTime(0.26, t + 0.18);
+    nGain.gain.exponentialRampToValueAtTime(0.01, t + dur);
     src.connect(bp).connect(nGain).connect(master);
-    src.start(t); src.stop(t + 1.3);
+    src.start(t); src.stop(t + dur);
 
-    // 低域ランブル（唸るエンジン感）
+    // エンジンランブル（sawtooth、加速感）
     const osc = ctx.createOscillator();
     const oGain = ctx.createGain();
     osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(55, t);
-    osc.frequency.exponentialRampToValueAtTime(130, t + 1.0);
+    osc.frequency.setValueAtTime(45, t);
+    osc.frequency.exponentialRampToValueAtTime(150, t + dur - 0.2);
     oGain.gain.setValueAtTime(0.0001, t);
-    oGain.gain.exponentialRampToValueAtTime(0.16, t + 0.2);
-    oGain.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+    oGain.gain.exponentialRampToValueAtTime(0.2, t + 0.25);
+    oGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
     osc.connect(oGain).connect(master);
-    osc.start(t); osc.stop(t + 1.25);
+    osc.start(t); osc.stop(t + dur);
+
+    // ハイパワーフィフス（5度の唸り、デチューン2基）
+    [0, 7].forEach((semi, i) => {
+      const o = ctx.createOscillator();
+      const og = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(400, t);
+      lp.frequency.exponentialRampToValueAtTime(2400, t + dur - 0.1);
+      o.type = "sawtooth";
+      const baseF = 110 * Math.pow(2, semi / 12) * (i === 0 ? 1 : 1.005);
+      o.frequency.setValueAtTime(baseF * 0.5, t);
+      o.frequency.exponentialRampToValueAtTime(baseF * 1.6, t + dur - 0.15);
+      og.gain.setValueAtTime(0.0001, t);
+      og.gain.exponentialRampToValueAtTime(0.07, t + 0.3);
+      og.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(lp).connect(og).connect(master);
+      o.start(t); o.stop(t + dur);
+    });
+
+    // 上昇シンセスイープ（緊張感）
+    const sweep = ctx.createOscillator();
+    const swG = ctx.createGain();
+    sweep.type = "triangle";
+    sweep.frequency.setValueAtTime(220, t);
+    sweep.frequency.exponentialRampToValueAtTime(1760, t + dur - 0.2);
+    swG.gain.setValueAtTime(0.0001, t);
+    swG.gain.exponentialRampToValueAtTime(0.05, t + dur - 0.3);
+    swG.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    sweep.connect(swG).connect(master);
+    sweep.start(t); sweep.stop(t + dur);
     return;
   }
 
   if (event === "stop") {
-    // 低域サブ（ドンッ）
+    // 重低音インパクト（ドォォン）
     const sub = ctx.createOscillator();
     const subG = ctx.createGain();
     sub.type = "sine";
-    sub.frequency.setValueAtTime(220, t);
-    sub.frequency.exponentialRampToValueAtTime(42, t + 0.25);
+    sub.frequency.setValueAtTime(260, t);
+    sub.frequency.exponentialRampToValueAtTime(38, t + 0.35);
     subG.gain.setValueAtTime(0.0001, t);
-    subG.gain.exponentialRampToValueAtTime(0.55, t + 0.008);
-    subG.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    subG.gain.exponentialRampToValueAtTime(0.7, t + 0.006);
+    subG.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
     sub.connect(subG).connect(master);
-    sub.start(t); sub.stop(t + 0.45);
+    sub.start(t); sub.stop(t + 0.6);
 
-    // 高域スナップ（カシャッ）
+    // ボディトリガー（sawtooth で重み付け）
+    const body = ctx.createOscillator();
+    const bodyG = ctx.createGain();
+    const bodyLp = ctx.createBiquadFilter();
+    body.type = "sawtooth";
+    body.frequency.setValueAtTime(110, t);
+    body.frequency.exponentialRampToValueAtTime(45, t + 0.2);
+    bodyLp.type = "lowpass"; bodyLp.frequency.value = 800;
+    bodyG.gain.setValueAtTime(0.0001, t);
+    bodyG.gain.exponentialRampToValueAtTime(0.35, t + 0.005);
+    bodyG.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    body.connect(bodyLp).connect(bodyG).connect(master);
+    body.start(t); body.stop(t + 0.32);
+
+    // ノイズクラッシュ（金属の衝突感）
+    const cn = ctx.createBufferSource();
+    cn.buffer = _noiseBuffer(ctx, 0.3, true);
+    const cnHp = ctx.createBiquadFilter();
+    cnHp.type = "highpass"; cnHp.frequency.value = 2200;
+    const cnG = ctx.createGain();
+    cnG.gain.setValueAtTime(0.35, t);
+    cnG.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    cn.connect(cnHp).connect(cnG).connect(master);
+    cn.start(t); cn.stop(t + 0.3);
+
+    // 高域メタリックスナップ（カシャッ）
     const snap = ctx.createOscillator();
+    const snapBp = ctx.createBiquadFilter();
     const snapG = ctx.createGain();
     snap.type = "square";
-    snap.frequency.setValueAtTime(980, t);
-    snap.frequency.exponentialRampToValueAtTime(420, t + 0.12);
+    snap.frequency.setValueAtTime(1400, t);
+    snap.frequency.exponentialRampToValueAtTime(520, t + 0.14);
+    snapBp.type = "bandpass"; snapBp.Q.value = 8;
+    snapBp.frequency.value = 1800;
     snapG.gain.setValueAtTime(0.0001, t);
-    snapG.gain.exponentialRampToValueAtTime(0.18, t + 0.004);
-    snapG.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
-    snap.connect(snapG).connect(master);
-    snap.start(t); snap.stop(t + 0.2);
+    snapG.gain.exponentialRampToValueAtTime(0.22, t + 0.004);
+    snapG.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    snap.connect(snapBp).connect(snapG).connect(master);
+    snap.start(t); snap.stop(t + 0.22);
     return;
   }
 
@@ -1808,7 +1896,7 @@ const App = () => {
             initial: { opacity: 0, y: 20 },
             animate: { opacity: 1, y: 0 },
             className: "font-mono text-[10px] tracking-[0.3em] text-cyan-400/70 sm:text-xs sm:tracking-[0.4em]",
-          }, "▸ AGRICULTURE CLUB PRESENTATION DRAFT"),
+          }, "▸ PRESENTATION DRAFT"),
           h(motion.h1, {
             initial: { opacity: 0, y: 30 },
             animate: { opacity: 1, y: 0 },
@@ -1821,7 +1909,7 @@ const App = () => {
               WebkitTextFillColor: "transparent",
               filter: "drop-shadow(0 4px 30px rgba(0,240,255,0.25))",
             }
-          }, "農業クラブ", h("br"), "発表順番決め", h("br"), "ルーレット"),
+          }, "発表順番決め", h("br"), "ルーレット"),
           h(motion.div, {
             initial: { opacity: 0 },
             animate: { opacity: 1 },
