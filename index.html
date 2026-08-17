@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>KINETIC::DRAFT — Presentation Order Randomizer</title>
-<meta name="description" content="Cyber-Athletic High-Tech な高校対抗・順位決定スロットアプリ。React + Framer Motion 製。" />
+<title>KINETIC::DRAFT — Order & Slot Lottery</title>
+<meta name="description" content="Cyber-Athletic High-Tech な発表順決め／発表枠抽選スロットアプリ。React + Framer Motion 製。" />
 
 <!-- Inline SVG favicon (外部リクエスト不要) -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2305060E'/%3E%3Cpath d='M55 15 L30 55 L48 55 L42 85 L70 42 L52 42 Z' fill='%2300F0FF'/%3E%3C/svg%3E" />
@@ -162,6 +162,7 @@ import {
   Radio, Activity, Target, Mic2, Shuffle, Maximize2,
   Pencil, Check, Volume2, VolumeX, Download,
   ArrowUp, ArrowDown, Save, Trash2, Archive,
+  Ticket, ListOrdered, Trophy, Minus, Users,
 } from "lucide-react";
 
 const h = React.createElement;
@@ -490,6 +491,50 @@ const NEON = {
   lime:    "#7CFF6B",
 };
 
+/* ============================================================================
+ * Draw Modes
+ *   order : 参加者全員の発表順を1番から決める（従来モード）
+ *   slots : 決まった数の枠を抽選する。枠に入らなかった参加者は補欠順を持つ。
+ *
+ *   どちらのモードも内部では「全員をシャッフルした1本の配列 = ranking」で表す。
+ *   slots モードは先頭 slotCount 件が当選、それ以降が補欠1,2,3… という解釈。
+ * ========================================================================= */
+const MODE_ORDER = "order";
+const MODE_SLOTS = "slots";
+
+const DEFAULT_SLOT_COUNT = 3;
+const clampSlotCount = (n, total) => {
+  const max = Math.max(1, total);
+  if (!Number.isFinite(n)) return Math.min(DEFAULT_SLOT_COUNT, max);
+  return Math.min(Math.max(1, Math.round(n)), max);
+};
+
+// 発表順の色は「リズム」のためだけで優劣の意味はない。
+const PALETTE = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
+// 枠抽選モードでは当選＝暖色で目立たせ、補欠＝くすんだ青灰で一段落とす。
+const WIN_PALETTE = [NEON.yellow, NEON.lime, "#FFD84D", "#9FFF8F", "#FFB05E", "#6AE1FF"];
+const WAIT_COLOR = "#8FA0B8";
+
+const accentFor = (mode, i, slotCount) => {
+  if (mode !== MODE_SLOTS) return PALETTE[i % PALETTE.length];
+  return i < slotCount ? WIN_PALETTE[i % WIN_PALETTE.length] : WAIT_COLOR;
+};
+
+// ranking 内の位置 i が何を意味するかを 1 箇所で決める。
+// kind: "order" | "win" | "wait" / num: その区分内での通し番号
+const labelFor = (mode, i, slotCount) => {
+  if (mode !== MODE_SLOTS) {
+    const n = i + 1;
+    return { kind: "order", num: n, tag: `ORDER ${String(n).padStart(2, "0")}`, jp: `${n}番目`, short: "順番" };
+  }
+  if (i < slotCount) {
+    const n = i + 1;
+    return { kind: "win", num: n, tag: `WINNER ${String(n).padStart(2, "0")}`, jp: `当選 ${n}`, short: "当選" };
+  }
+  const n = i - slotCount + 1;
+  return { kind: "wait", num: n, tag: `WAITLIST ${String(n).padStart(2, "0")}`, jp: `補欠 ${n}`, short: "補欠" };
+};
+
 // crypto.randomUUID() の互換ラッパー（古い環境や非HTTPSでも動く）
 const makeId = () => {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -502,6 +547,8 @@ const makeId = () => {
 const STORAGE_SCHOOLS = "kineticdraft.schools.v2";
 const STORAGE_MUTED = "kineticdraft.muted.v1";
 const STORAGE_SAVED = "kineticdraft.saved.v1";
+const STORAGE_MODE = "kineticdraft.mode.v1";
+const STORAGE_SLOTCOUNT = "kineticdraft.slotcount.v1";
 
 const loadSchools = () => {
   if (typeof window === "undefined") return null;
@@ -531,6 +578,31 @@ const saveMuted = (m) => {
   try { window.localStorage.setItem(STORAGE_MUTED, m ? "1" : "0"); } catch {}
 };
 
+const loadMode = () => {
+  if (typeof window === "undefined") return MODE_ORDER;
+  try {
+    return window.localStorage.getItem(STORAGE_MODE) === MODE_SLOTS ? MODE_SLOTS : MODE_ORDER;
+  } catch { return MODE_ORDER; }
+};
+
+const saveMode = (m) => {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_MODE, m); } catch {}
+};
+
+const loadSlotCount = () => {
+  if (typeof window === "undefined") return DEFAULT_SLOT_COUNT;
+  try {
+    const n = parseInt(window.localStorage.getItem(STORAGE_SLOTCOUNT), 10);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_SLOT_COUNT;
+  } catch { return DEFAULT_SLOT_COUNT; }
+};
+
+const saveSlotCount = (n) => {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_SLOTCOUNT, String(n)); } catch {}
+};
+
 const loadSavedDrafts = () => {
   if (typeof window === "undefined") return [];
   try {
@@ -540,15 +612,22 @@ const loadSavedDrafts = () => {
     if (!Array.isArray(data)) return [];
     return data
       .filter((x) => x && typeof x.id === "string" && typeof x.name === "string" && Array.isArray(x.ranking))
-      .map((x) => ({
-        id: x.id,
-        name: x.name,
-        createdAt: typeof x.createdAt === "string" ? x.createdAt : new Date().toISOString(),
-        ranking: x.ranking.filter((s) => s && typeof s.name === "string").map((s) => ({
+      .map((x) => {
+        // mode を持たない記録は枠抽選モード導入前のもの＝発表順モードとして読む
+        const mode = x.mode === MODE_SLOTS ? MODE_SLOTS : MODE_ORDER;
+        const ranking = x.ranking.filter((s) => s && typeof s.name === "string").map((s) => ({
           id: typeof s.id === "string" ? s.id : makeId(),
           name: s.name,
-        })),
-      }));
+        }));
+        return {
+          id: x.id,
+          name: x.name,
+          createdAt: typeof x.createdAt === "string" ? x.createdAt : new Date().toISOString(),
+          mode,
+          slotCount: mode === MODE_SLOTS ? clampSlotCount(x.slotCount, ranking.length) : ranking.length,
+          ranking,
+        };
+      });
   } catch { return []; }
 };
 
@@ -578,19 +657,26 @@ const _downloadBlob = (blob, filename) => {
 };
 const _timeStamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
-const downloadRankingCsv = (ranking, label) => {
-  const rows = [["順番", "高校名"]];
-  ranking.forEach((s, i) => rows.push([String(i + 1), s.name]));
-  _downloadBlob(_csvToBlob(rows), `${_sanitizeFile(label || "presentation-order")}-${_timeStamp()}.csv`);
+const downloadRankingCsv = (ranking, label, mode = MODE_ORDER, slotCount = 0) => {
+  const isSlots = mode === MODE_SLOTS;
+  const rows = [isSlots ? ["区分", "番号", "高校名"] : ["順番", "高校名"]];
+  ranking.forEach((s, i) => {
+    const l = labelFor(mode, i, slotCount);
+    rows.push(isSlots ? [l.short, String(l.num), s.name] : [String(l.num), s.name]);
+  });
+  const fallback = isSlots ? "slot-lottery" : "presentation-order";
+  _downloadBlob(_csvToBlob(rows), `${_sanitizeFile(label || fallback)}-${_timeStamp()}.csv`);
 };
 
 const downloadAllSavedCsv = (savedList) => {
-  const rows = [["大会名", "順番", "高校名", "保存日時"]];
+  const rows = [["大会名", "モード", "区分", "番号", "高校名", "保存日時"]];
   savedList.forEach((rec) => {
     const dt = new Date(rec.createdAt);
     const dtStr = isNaN(dt.getTime()) ? rec.createdAt : dt.toLocaleString("ja-JP");
+    const modeLabel = rec.mode === MODE_SLOTS ? "枠抽選" : "発表順";
     rec.ranking.forEach((s, i) => {
-      rows.push([rec.name, String(i + 1), s.name, dtStr]);
+      const l = labelFor(rec.mode, i, rec.slotCount);
+      rows.push([rec.name, modeLabel, l.short, String(l.num), s.name, dtStr]);
     });
   });
   _downloadBlob(_csvToBlob(rows), `all-drafts-${_timeStamp()}.csv`);
@@ -648,7 +734,7 @@ const Readout = ({ icon, label, value, pulse }) =>
     h("span", { className: `text-cyan-300 ${pulse ? "animate-pulse" : ""}` }, value)
   );
 
-const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute }) =>
+const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute, mode, slotCount }) =>
   h("header", { className: "relative z-20 border-b border-cyan-500/20 backdrop-blur-md" },
     h("div", { className: "mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4" },
       h("div", { className: "flex items-center gap-2 sm:gap-3 min-w-0" },
@@ -668,7 +754,7 @@ const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute }) =>
             "KINETIC", h("span", { className: "text-cyan-400" }, "::"), "DRAFT"
           ),
           h("div", { className: "mt-1 hidden font-mono text-[10px] tracking-[0.4em] text-cyan-400/70 sm:block" },
-            "PRESENTATION ORDER RANDOMIZER — v2.4.1"
+            mode === MODE_SLOTS ? "SLOT LOTTERY — v2.5.0" : "PRESENTATION ORDER RANDOMIZER — v2.5.0"
           )
         )
       ),
@@ -676,11 +762,18 @@ const HeaderHUD = ({ schoolCount, statusLabel, muted, onToggleMute }) =>
         /* モバイル用コンパクト表示 */
         h("div", { className: "flex items-center gap-1.5 font-mono text-[10px] text-cyan-300 sm:hidden" },
           h(Radio, { className: "h-3 w-3 text-cyan-400/70" }),
-          String(schoolCount).padStart(2, "0")
+          String(schoolCount).padStart(2, "0"),
+          mode === MODE_SLOTS && h("span", { className: "text-yellow-300/90" },
+            ` / 枠${String(slotCount).padStart(2, "0")}`)
         ),
         /* デスクトップ用 */
         h("div", { className: "hidden items-center gap-6 sm:flex" },
           h(Readout, { icon: h(Radio, { className: "h-3 w-3" }), label: "ENTRIES", value: String(schoolCount).padStart(2, "0") }),
+          mode === MODE_SLOTS && h(Readout, {
+            icon: h(Ticket, { className: "h-3 w-3" }),
+            label: "SLOTS",
+            value: String(slotCount).padStart(2, "0"),
+          }),
           h(Readout, { icon: h(Activity, { className: "h-3 w-3" }), label: "STATUS", value: statusLabel, pulse: true })
         ),
         h("button", {
@@ -719,6 +812,127 @@ const EmptyState = () =>
       "NO PARTICIPANTS — 上のフォームから高校を追加してください"
     )
   );
+
+/* ============================================================================
+ * Draw Settings — 抽選モードの切り替えと枠数の指定
+ * ========================================================================= */
+const ModeCard = ({ active, icon, title, desc, onClick, accent }) =>
+  h("button", {
+    onClick,
+    "aria-pressed": active,
+    className: `flex-1 rounded-md border px-3 py-3 text-left transition ${
+      active
+        ? "border-transparent bg-white/[0.06]"
+        : "border-white/10 bg-white/[0.01] hover:border-white/25 hover:bg-white/[0.03]"
+    }`,
+    style: active
+      ? { borderColor: accent, boxShadow: `0 0 0 1px ${accent}, 0 0 24px ${accent}33` }
+      : undefined,
+  },
+    h("div", { className: "flex items-center gap-2" },
+      h("span", { className: "lucide-wrap", style: { color: active ? accent : "rgba(255,255,255,0.35)" } }, icon),
+      h("span", {
+        className: "font-jp text-sm font-bold",
+        style: { color: active ? "#fff" : "rgba(255,255,255,0.6)" },
+      }, title)
+    ),
+    h("div", { className: "mt-1.5 font-jp text-[11px] leading-snug text-white/45" }, desc)
+  );
+
+const DrawSettings = ({ mode, setMode, slotCount, setSlotCount, total, disabled }) => {
+  const effectiveSlots = clampSlotCount(slotCount, total);
+  const waitCount = Math.max(0, total - effectiveSlots);
+
+  return h("section", { className: "relative" },
+    h(PanelHeader, {
+      icon: h(Target, { className: "h-4 w-4" }),
+      label: "DRAW MODE",
+      sublabel: "抽選の種類と枠数",
+    }),
+    h("div", { className: "glass mt-3 p-4 sm:p-5" },
+      h("div", { className: "flex flex-col gap-2 sm:flex-row" },
+        h(ModeCard, {
+          active: mode === MODE_ORDER,
+          accent: NEON.cyan,
+          icon: h(ListOrdered, { className: "h-4 w-4" }),
+          title: "発表順モード",
+          desc: "参加者全員の発表順を1番から順に決めます。",
+          onClick: () => !disabled && setMode(MODE_ORDER),
+        }),
+        h(ModeCard, {
+          active: mode === MODE_SLOTS,
+          accent: NEON.yellow,
+          icon: h(Ticket, { className: "h-4 w-4" }),
+          title: "枠抽選モード",
+          desc: "決まった数の枠を抽選します。外れた参加者には補欠順がつきます。",
+          onClick: () => !disabled && setMode(MODE_SLOTS),
+        })
+      ),
+
+      /* 枠数の指定 */
+      h(AnimatePresence, null,
+        mode === MODE_SLOTS && h(motion.div, {
+          initial: { height: 0, opacity: 0 },
+          animate: { height: "auto", opacity: 1 },
+          exit: { height: 0, opacity: 0 },
+          transition: { duration: 0.25 },
+          className: "overflow-hidden",
+        },
+          h("div", { className: "mt-4 rounded-md border border-yellow-300/25 bg-yellow-300/[0.04] p-3 sm:p-4" },
+            h("div", { className: "flex flex-wrap items-center justify-between gap-3" },
+              h("div", null,
+                h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-yellow-200/80" },
+                  "AVAILABLE SLOTS"),
+                h("div", { className: "mt-1 font-jp text-sm text-white/70" }, "抽選する枠の数")
+              ),
+              h("div", { className: "flex items-center gap-2" },
+                h("button", {
+                  onClick: () => setSlotCount(clampSlotCount(effectiveSlots - 1, total)),
+                  disabled: disabled || effectiveSlots <= 1,
+                  "aria-label": "枠を1つ減らす",
+                  className: "flex h-9 w-9 items-center justify-center rounded border border-white/15 text-white/70 transition hover:border-yellow-300/60 hover:text-yellow-200 disabled:opacity-25",
+                }, h(Minus, { className: "h-4 w-4" })),
+                h("input", {
+                  type: "number",
+                  min: 1,
+                  max: Math.max(1, total),
+                  value: effectiveSlots,
+                  disabled,
+                  onChange: (e) => setSlotCount(clampSlotCount(parseInt(e.target.value, 10), total)),
+                  "aria-label": "枠数",
+                  className: "w-20 rounded border border-yellow-300/40 bg-black/50 px-2 py-2 text-center font-display text-xl font-black text-yellow-200 outline-none focus:border-yellow-300 focus:shadow-[0_0_0_4px_rgba(245,255,61,0.15)]",
+                }),
+                h("button", {
+                  onClick: () => setSlotCount(clampSlotCount(effectiveSlots + 1, total)),
+                  disabled: disabled || effectiveSlots >= Math.max(1, total),
+                  "aria-label": "枠を1つ増やす",
+                  className: "flex h-9 w-9 items-center justify-center rounded border border-white/15 text-white/70 transition hover:border-yellow-300/60 hover:text-yellow-200 disabled:opacity-25",
+                }, h(Plus, { className: "h-4 w-4" }))
+              )
+            ),
+            h("div", { className: "mt-3 border-t border-white/10 pt-3 font-jp text-xs leading-relaxed text-white/60" },
+              total === 0
+                ? "参加者を登録すると枠数を設定できます。"
+                : h(React.Fragment, null,
+                    h("span", { className: "text-white/80" }, `${total}件`),
+                    " 中 ",
+                    h("span", { className: "font-bold text-yellow-200" }, `${effectiveSlots}件`),
+                    " を抽選で決定。",
+                    waitCount > 0
+                      ? h(React.Fragment, null,
+                          "残り ",
+                          h("span", { className: "text-white/80" }, `${waitCount}件`),
+                          " は補欠1〜", String(waitCount), " になります。"
+                        )
+                      : "全員が枠に入ります。"
+                  )
+            )
+          )
+        )
+      )
+    )
+  );
+};
 
 /* ============================================================================
  * School Registry
@@ -1144,7 +1358,7 @@ const Shockwave = ({ trigger, color = NEON.yellow }) =>
 /* ============================================================================
  * Reveal Overlay — ルーレット停止後のド派手当選表示
  * ========================================================================= */
-const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => {
+const RevealOverlay = ({ school, index, total, mode, slotCount, onDone, duration = 1700 }) => {
   useEffect(() => {
     if (!school) return;
     const id = setTimeout(() => onDone?.(), duration);
@@ -1153,9 +1367,13 @@ const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => 
 
   if (!school) return null;
 
-  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
-  const color = palette[(position - 1) % palette.length];
+  const isSlots = mode === MODE_SLOTS;
+  const position = index + 1;
+  const color = accentFor(mode, index, slotCount);
   const isFinal = position >= total;
+  const captionLabel = isSlots ? "WINNING SLOT" : "PRESENTATION ORDER";
+  const finalLabel = isSlots ? "▸ ALL SLOTS FILLED" : "▸ ALL POSITIONS DECIDED";
+  const nextLabel = isSlots ? "▸ NEXT SLOT INCOMING..." : "▸ NEXT DRAW INCOMING...";
 
   return h(motion.div, {
     className: "fixed inset-0 z-[70] flex flex-col items-center justify-center px-4",
@@ -1218,13 +1436,24 @@ const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => 
       /* order badge */
       h("div", { className: "mb-3 flex items-center gap-3 sm:mb-5" },
         h("div", { className: "font-mono text-[9px] tracking-[0.4em] text-white/50 sm:text-[10px]" },
-          "PRESENTATION ORDER"),
+          captionLabel),
         h("div", {
           className: "font-display text-2xl font-black sm:text-4xl",
           style: { color, textShadow: `0 0 16px ${color}aa` },
         }, `#${String(position).padStart(2, "0")}`),
         h("div", { className: "font-mono text-[10px] text-white/30 sm:text-xs" },
           `/ ${String(total).padStart(2, "0")}`)
+      ),
+      /* 枠抽選モードでは「当選」を日本語で大きく添える */
+      isSlots && h(motion.div, {
+        initial: { opacity: 0, scale: 0.8 },
+        animate: { opacity: 1, scale: 1 },
+        transition: { delay: 0.08, type: "spring", stiffness: 260, damping: 18 },
+        className: "mb-3 flex items-center gap-2 rounded-full px-4 py-1.5 sm:mb-5",
+        style: { border: `1px solid ${color}`, background: `${color}1a`, boxShadow: `0 0 24px ${color}55` },
+      },
+        h(Trophy, { className: "h-4 w-4", style: { color } }),
+        h("span", { className: "font-jp text-sm font-black tracking-[0.2em]", style: { color } }, "当　選")
       ),
       /* school name (huge) */
       h(motion.div, {
@@ -1243,7 +1472,7 @@ const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => 
         animate: { opacity: 0.7 },
         transition: { delay: 1.0, duration: 0.3 },
         className: "mt-6 font-mono text-[10px] tracking-[0.4em] text-cyan-300/80 sm:mt-10 sm:text-xs",
-      }, isFinal ? "▸ ALL POSITIONS DECIDED" : "▸ NEXT DRAW INCOMING...")
+      }, isFinal ? finalLabel : nextLabel)
     )
   );
 };
@@ -1251,10 +1480,10 @@ const RevealOverlay = ({ school, position, total, onDone, duration = 1700 }) => 
 /* ============================================================================
  * Position Badge
  * ========================================================================= */
-const PositionBadge = ({ position, total }) => {
-  // 発表順が進むほど暖色→寒色に。色自体に優劣の意味はない、単なる視覚的リズム。
-  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
-  const color = palette[(position - 1) % palette.length];
+const PositionBadge = ({ position, total, mode, slotCount }) => {
+  // 色自体に優劣の意味はない、単なる視覚的リズム（枠抽選モードのみ当選色を使う）。
+  const color = accentFor(mode, position - 1, slotCount);
+  const caption = mode === MODE_SLOTS ? "WINNING SLOT" : "PRESENTATION ORDER";
   return h("div", { className: "flex items-center gap-3" },
     h("div", {
       className: "flex h-10 w-10 items-center justify-center rounded border",
@@ -1266,7 +1495,7 @@ const PositionBadge = ({ position, total }) => {
       }, String(position).padStart(2, "0"))
     ),
     h("div", null,
-      h("div", { className: "font-mono text-[10px] tracking-widest text-white/50" }, "PRESENTATION ORDER"),
+      h("div", { className: "font-mono text-[10px] tracking-widest text-white/50" }, caption),
       h("div", { className: "font-display text-3xl font-black leading-none", style: { color } },
         `#${String(position).padStart(2, "0")}`,
         h("span", { className: "font-mono text-sm text-white/30" }, ` / ${String(total).padStart(2, "0")}`)
@@ -1278,10 +1507,11 @@ const PositionBadge = ({ position, total }) => {
 /* ============================================================================
  * Slot Section
  * ========================================================================= */
-const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive }) => {
+const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive, mode, slotCount, drawCount }) => {
   const currentTarget = ranking[currentIdx];
   const [shock, setShock] = useState(false);
   const { play } = useSoundEngine();
+  const isSlots = mode === MODE_SLOTS;
 
   const handleStopped = () => {
     setShock(true);
@@ -1294,13 +1524,15 @@ const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive 
     h(PanelHeader, {
       icon: h(Zap, { className: "h-4 w-4" }),
       label: "KINETIC SLOT ENGINE",
-      sublabel: isActive ? `DRAWING POSITION #${currentIdx + 1}` : "STANDBY",
+      sublabel: isActive
+        ? (isSlots ? `DRAWING SLOT #${currentIdx + 1}` : `DRAWING POSITION #${currentIdx + 1}`)
+        : "STANDBY",
     }),
     h("div", { className: "glass relative mt-3 overflow-hidden p-4 sm:p-6" },
       h("div", { className: "absolute left-0 top-0 h-full w-[3px] bg-gradient-to-b from-cyan-400 via-pink-500 to-yellow-300 opacity-80" }),
       h("div", { className: "absolute right-0 top-0 h-full w-[3px] bg-gradient-to-b from-yellow-300 via-pink-500 to-cyan-400 opacity-80" }),
       h("div", { className: "mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-5" },
-        h(PositionBadge, { position: currentIdx + 1, total: schools.length }),
+        h(PositionBadge, { position: currentIdx + 1, total: drawCount, mode, slotCount }),
         h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-cyan-300/70" },
           `TARGET ▸ ${currentTarget ? "LOCKED" : "—"}`
         )
@@ -1318,7 +1550,9 @@ const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive 
     ),
     h(Shockwave, {
       trigger: shock,
-      color: currentIdx === 0 ? NEON.yellow : currentIdx === 1 ? NEON.cyan : NEON.magenta,
+      color: isSlots
+        ? accentFor(mode, currentIdx, slotCount)
+        : currentIdx === 0 ? NEON.yellow : currentIdx === 1 ? NEON.cyan : NEON.magenta,
     })
   );
 };
@@ -1326,32 +1560,35 @@ const SlotSection = ({ schools, ranking, currentIdx, onFinishPosition, isActive 
 /* ============================================================================
  * Full-Screen Order Display（全画面で発表順を表示）
  * ========================================================================= */
-const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
-  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
-  const accent = (i) => palette[i % palette.length];
+const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv, mode, slotCount }) => {
+  const isSlots = mode === MODE_SLOTS;
+  // 枠抽選モードでは当選だけを大きく主役にし、補欠は下段にコンパクトに並べる。
+  const feature = isSlots ? ranking.slice(0, slotCount) : ranking;
+  const waitlist = isSlots ? ranking.slice(slotCount) : [];
+  const n = feature.length;
 
-  // 校数に応じてグリッドの列数を段階的に（モバイルでは常に1列）
-  const gridCols = ranking.length <= 4
+  // 件数に応じてグリッドの列数を段階的に（モバイルでは常に1列）
+  const gridCols = n <= 4
     ? "grid-cols-1"
-    : ranking.length <= 8
+    : n <= 8
     ? "grid-cols-1 sm:grid-cols-2"
-    : ranking.length <= 15
+    : n <= 15
     ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3"
     : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4";
 
   // モバイル→デスクトップで段階的にスケール
-  const sizeClass = ranking.length <= 4 ? "text-3xl sm:text-5xl md:text-7xl"
-                  : ranking.length <= 8 ? "text-2xl sm:text-3xl md:text-5xl"
-                  : ranking.length <= 15 ? "text-xl sm:text-2xl md:text-3xl"
+  const sizeClass = n <= 4 ? "text-3xl sm:text-5xl md:text-7xl"
+                  : n <= 8 ? "text-2xl sm:text-3xl md:text-5xl"
+                  : n <= 15 ? "text-xl sm:text-2xl md:text-3xl"
                   : "text-lg sm:text-xl md:text-2xl";
-  const numSizeClass = ranking.length <= 4 ? "text-5xl sm:text-7xl md:text-9xl"
-                     : ranking.length <= 8 ? "text-4xl sm:text-5xl md:text-7xl"
-                     : ranking.length <= 15 ? "text-3xl sm:text-4xl md:text-5xl"
+  const numSizeClass = n <= 4 ? "text-5xl sm:text-7xl md:text-9xl"
+                     : n <= 8 ? "text-4xl sm:text-5xl md:text-7xl"
+                     : n <= 15 ? "text-3xl sm:text-4xl md:text-5xl"
                      : "text-2xl sm:text-3xl md:text-4xl";
 
   // 背景の巨大番号サイズ（clamp で viewport 幅に追従）
-  const bgNumSize = ranking.length <= 4 ? "clamp(100px, 22vw, 240px)"
-                  : ranking.length <= 8 ? "clamp(80px, 16vw, 180px)"
+  const bgNumSize = n <= 4 ? "clamp(100px, 22vw, 240px)"
+                  : n <= 8 ? "clamp(80px, 16vw, 180px)"
                   : "clamp(60px, 10vw, 120px)";
 
   return h(motion.div, {
@@ -1377,9 +1614,9 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
       h("div", { className: "mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-5" },
         h("div", { className: "min-w-0" },
           h("div", { className: "font-mono text-[9px] tracking-[0.3em] text-cyan-400/80 sm:text-[10px] sm:tracking-[0.4em]" },
-            "▸ FINAL ORDER FIXED"),
+            isSlots ? "▸ ALL SLOTS FIXED" : "▸ FINAL ORDER FIXED"),
           h("div", { className: "mt-1 font-jp text-lg font-black tracking-wide text-white sm:text-2xl" },
-            "発表順番　決定"
+            isSlots ? `発表枠　抽選結果（${n}枠）` : "発表順番　決定"
           )
         ),
         h("div", { className: "flex flex-wrap items-center gap-2 sm:gap-3" },
@@ -1401,13 +1638,15 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
       )
     ),
 
-    /* メイン：全順位グリッド */
+    /* メイン：当選（発表順モードでは全順位）グリッド */
     h("div", { className: "relative z-10 mx-auto max-w-[1600px] px-4 py-6 sm:px-8 sm:py-10" },
       h("div", {
         className: `grid gap-3 sm:gap-4 ${gridCols}`,
       },
-        ...ranking.map((s, i) =>
-          h(motion.div, {
+        ...feature.map((s, i) => {
+          const color = accentFor(mode, i, slotCount);
+          const l = labelFor(mode, i, slotCount);
+          return h(motion.div, {
             key: s.id,
             initial: { opacity: 0, y: 30, scale: 0.92 },
             animate: { opacity: 1, y: 0, scale: 1 },
@@ -1419,7 +1658,7 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
             },
             className: "relative overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.04] to-transparent p-4 sm:p-5 md:p-6",
             style: {
-              boxShadow: `inset 4px 0 0 ${accent(i)}, 0 0 0 1px rgba(255,255,255,0.03)`,
+              boxShadow: `inset 4px 0 0 ${color}, 0 0 0 1px rgba(255,255,255,0.03)`,
             }
           },
             /* 背景の巨大な番号 */
@@ -1427,22 +1666,23 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
               className: "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-display font-black leading-none opacity-[0.08]",
               style: {
                 fontSize: bgNumSize,
-                color: accent(i),
+                color,
               }
-            }, String(i + 1).padStart(2, "0")),
+            }, String(l.num).padStart(2, "0")),
 
             /* 前景 */
             h("div", { className: "relative flex items-center gap-3 sm:gap-5" },
               h("div", {
                 className: `font-display font-black leading-none ${numSizeClass}`,
                 style: {
-                  color: accent(i),
-                  textShadow: `0 0 20px ${accent(i)}99, 0 0 40px ${accent(i)}44`,
+                  color,
+                  textShadow: `0 0 20px ${color}99, 0 0 40px ${color}44`,
                 }
-              }, String(i + 1).padStart(2, "0")),
+              }, String(l.num).padStart(2, "0")),
               h("div", { className: "min-w-0 flex-1" },
-                h("div", { className: "font-mono text-[10px] tracking-[0.3em] text-white/50" },
-                  `ORDER ${String(i + 1).padStart(2, "0")}`
+                h("div", { className: "flex items-center gap-2 font-mono text-[10px] tracking-[0.3em] text-white/50" },
+                  isSlots && h(Trophy, { className: "h-3 w-3", style: { color } }),
+                  l.tag
                 ),
                 h("div", {
                   className: `font-jp font-black text-white break-words ${sizeClass}`,
@@ -1450,13 +1690,44 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
                 }, s.name)
               )
             )
+          );
+        })
+      ),
+
+      /* 補欠（枠抽選モードのみ） */
+      waitlist.length > 0 && h("div", { className: "mt-10" },
+        h("div", { className: "mb-3 flex items-center gap-3" },
+          h(Users, { className: "h-4 w-4", style: { color: WAIT_COLOR } }),
+          h("div", { className: "font-jp text-sm font-bold tracking-wide", style: { color: WAIT_COLOR } },
+            `補欠順（${waitlist.length}件）`),
+          h("div", { className: "h-px flex-1", style: { background: `linear-gradient(90deg, ${WAIT_COLOR}55, transparent)` } })
+        ),
+        h("ol", { className: "grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" },
+          ...waitlist.map((s, j) =>
+            h(motion.li, {
+              key: s.id,
+              initial: { opacity: 0, y: 12 },
+              animate: { opacity: 1, y: 0 },
+              transition: { delay: 0.3 + j * 0.03, duration: 0.3 },
+              className: "flex items-center gap-3 rounded border border-white/10 bg-white/[0.02] px-3 py-2.5",
+              style: { boxShadow: `inset 3px 0 0 ${WAIT_COLOR}88` },
+            },
+              h("span", {
+                className: "font-display text-xl font-black leading-none",
+                style: { color: WAIT_COLOR },
+              }, String(j + 1).padStart(2, "0")),
+              h("span", { className: "min-w-0 flex-1 truncate font-jp text-base font-bold text-white/85" }, s.name),
+              h("span", { className: "font-mono text-[9px] tracking-[0.2em] text-white/30" }, "WAIT")
+            )
           )
         )
       ),
 
       /* フッターの案内 */
       h("div", { className: "mt-10 text-center font-mono text-[11px] tracking-[0.3em] text-white/30" },
-        `TOTAL ${ranking.length} PRESENTERS — この画面は右上「CLOSE」で閉じられます`
+        isSlots
+          ? `${n} WINNERS / ${waitlist.length} WAITLISTED — この画面は右上「CLOSE」で閉じられます`
+          : `TOTAL ${ranking.length} PRESENTERS — この画面は右上「CLOSE」で閉じられます`
       )
     )
   );
@@ -1465,10 +1736,8 @@ const FullScreenOrderDisplay = ({ ranking, onClose, onExportCsv }) => {
 /* ============================================================================
  * Results Board
  * ========================================================================= */
-const ResultsBoard = ({ revealed, total }) => {
-  // 発表順による色の違いは「リズム」のためだけ。優劣の意味はない。
-  const palette = [NEON.cyan, "#6AE1FF", "#9FCFFF", "#C4BFFF", NEON.magenta, "#FF7BB8", "#FFB05E", NEON.yellow];
-  const accent = (i) => palette[i % palette.length];
+const ResultsBoard = ({ revealed, total, mode, slotCount, waitlist = [] }) => {
+  const isSlots = mode === MODE_SLOTS;
   const listRef = useRef(null);
 
   // 新しい結果が追加されたら末尾に自動スクロール
@@ -1484,9 +1753,9 @@ const ResultsBoard = ({ revealed, total }) => {
 
   return h("section", null,
     h(PanelHeader, {
-      icon: h(Mic2, { className: "h-4 w-4" }),
-      label: "PRESENTATION ORDER",
-      sublabel: `${revealed.length} / ${total} DECIDED`,
+      icon: h(isSlots ? Ticket : Mic2, { className: "h-4 w-4" }),
+      label: isSlots ? "WINNING SLOTS" : "PRESENTATION ORDER",
+      sublabel: `${revealed.length} / ${total} ${isSlots ? "FILLED" : "DECIDED"}`,
     }),
     h("div", { className: "glass mt-3 p-4 sm:p-5" },
       revealed.length === 0
@@ -1494,36 +1763,66 @@ const ResultsBoard = ({ revealed, total }) => {
             "AWAITING FIRST RESULT...")
         : h("ol", { ref: listRef, className: "space-y-1.5 max-h-[60vh] overflow-y-auto pr-1 scroll-smooth" },
             h(AnimatePresence, null,
-              ...revealed.map((s, i) =>
-                h(motion.li, {
+              ...revealed.map((s, i) => {
+                const color = accentFor(mode, i, slotCount);
+                const l = labelFor(mode, i, slotCount);
+                return h(motion.li, {
                   key: s.id,
                   layout: true,
                   initial: { opacity: 0, x: -40, scale: 0.9 },
                   animate: { opacity: 1, x: 0, scale: 1 },
                   transition: { type: "spring", stiffness: 180, damping: 20 },
                   className: "relative flex items-center gap-4 overflow-hidden rounded border border-white/10 bg-gradient-to-r from-white/[0.03] to-transparent px-4 py-3",
-                  style: { boxShadow: `inset 3px 0 0 ${accent(i)}` },
+                  style: { boxShadow: `inset 3px 0 0 ${color}` },
                 },
                   h("div", {
                     className: "font-display text-3xl font-black leading-none",
-                    style: { color: accent(i), textShadow: `0 0 12px ${accent(i)}66` }
-                  }, String(i + 1).padStart(2, "0")),
+                    style: { color, textShadow: `0 0 12px ${color}66` }
+                  }, String(l.num).padStart(2, "0")),
                   h("div", { className: "flex-1" },
                     h("div", { className: "font-jp text-lg font-bold tracking-wide text-white" }, s.name),
                     h("div", { className: "font-mono text-[10px] tracking-widest text-white/40" },
-                      i === 0 ? "FIRST PRESENTER" : `ORDER ${i + 1}`
+                      isSlots ? l.tag : i === 0 ? "FIRST PRESENTER" : `ORDER ${i + 1}`
                     )
                   ),
                   h("div", {
                     className: "flex h-8 w-8 items-center justify-center rounded-full",
-                    style: { background: `${accent(i)}22`, border: `1px solid ${accent(i)}` }
+                    style: { background: `${color}22`, border: `1px solid ${color}` }
                   },
-                    h(Mic2, { className: "h-4 w-4", style: { color: accent(i) } })
+                    h(isSlots ? Trophy : Mic2, { className: "h-4 w-4", style: { color } })
                   )
-                )
-              )
+                );
+              })
+            )
+          ),
+
+      /* 補欠リスト（枠抽選モードで抽選完了後のみ） */
+      waitlist.length > 0 && h(motion.div, {
+        initial: { opacity: 0, y: 8 },
+        animate: { opacity: 1, y: 0 },
+        transition: { delay: 0.2 },
+        className: "mt-4 border-t border-white/10 pt-4",
+      },
+        h("div", { className: "mb-2 flex items-center gap-2" },
+          h(Users, { className: "h-3.5 w-3.5", style: { color: WAIT_COLOR } }),
+          h("span", { className: "font-mono text-[10px] tracking-[0.3em]", style: { color: WAIT_COLOR } },
+            `WAITLIST — 補欠 ${waitlist.length}件`)
+        ),
+        h("ol", { className: "grid gap-1.5 sm:grid-cols-2" },
+          ...waitlist.map((s, j) =>
+            h("li", {
+              key: s.id,
+              className: "flex items-center gap-2 rounded border border-white/5 bg-white/[0.015] px-2.5 py-1.5",
+            },
+              h("span", {
+                className: "min-w-[1.75rem] font-display text-sm font-black",
+                style: { color: WAIT_COLOR },
+              }, String(j + 1).padStart(2, "0")),
+              h("span", { className: "min-w-0 flex-1 truncate font-jp text-sm text-white/75" }, s.name)
             )
           )
+        )
+      )
     )
   );
 };
@@ -1635,14 +1934,14 @@ const SavedDraftsPanel = ({ saved, onDelete, onRename, onExportAll, onExportOne 
     h(PanelHeader, {
       icon: h(Archive, { className: "h-4 w-4" }),
       label: "SAVED DRAFTS",
-      sublabel: `${saved.length} DRAFT(S) — 保存された発表順のアーカイブ`,
+      sublabel: `${saved.length} DRAFT(S) — 保存された抽選結果のアーカイブ`,
     }),
     h("div", { className: "glass mt-3 p-4 sm:p-5" },
       h("div", { className: "mb-3 flex flex-wrap items-center justify-between gap-2" },
         h("div", { className: "font-mono text-[10px] tracking-wider text-white/50" },
           saved.length === 0
-            ? "ドラフト完了後に「SAVE」で結果を保存できます"
-            : `TOTAL ${saved.length} 件 — クリックで順番を展開`
+            ? "抽選完了後に「SAVE」で結果を保存できます"
+            : `TOTAL ${saved.length} 件 — クリックで結果を展開`
         ),
         h("button", {
           onClick: onExportAll,
@@ -1691,12 +1990,22 @@ const SavedDraftsPanel = ({ saved, onDelete, onRename, onExportAll, onExportOne 
                         : h("button", {
                             onClick: () => setExpandedId(isExpanded ? null : d.id),
                             className: "block w-full text-left truncate font-jp text-sm font-bold text-white hover:text-cyan-300",
-                            title: "クリックで順番を展開",
+                            title: "クリックで結果を展開",
                           }, d.name),
-                      h("div", { className: "mt-0.5 flex items-center gap-2 font-mono text-[10px] tracking-wider text-white/40" },
+                      h("div", { className: "mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10px] tracking-wider text-white/40" },
+                        h("span", {
+                          className: "rounded-sm px-1.5 py-0.5",
+                          style: d.mode === MODE_SLOTS
+                            ? { color: NEON.yellow, border: `1px solid ${NEON.yellow}55`, background: `${NEON.yellow}12` }
+                            : { color: NEON.cyan, border: `1px solid ${NEON.cyan}55`, background: `${NEON.cyan}12` },
+                        }, d.mode === MODE_SLOTS ? "枠抽選" : "発表順"),
                         h("span", null, fmtDate(d.createdAt)),
                         h("span", { className: "text-cyan-400/50" }, "▸"),
-                        h("span", null, `${d.ranking.length} 校`)
+                        h("span", null,
+                          d.mode === MODE_SLOTS
+                            ? `${d.slotCount}枠 / ${d.ranking.length}件`
+                            : `${d.ranking.length} 件`
+                        )
                       )
                     ),
                     /* 右: 操作ボタン */
@@ -1734,16 +2043,25 @@ const SavedDraftsPanel = ({ saved, onDelete, onRename, onExportAll, onExportOne 
                     className: "overflow-hidden border-t border-white/5",
                   },
                     h("ol", { className: "grid gap-1 px-3 py-3 sm:grid-cols-2" },
-                      ...d.ranking.map((s, i) =>
-                        h("li", {
+                      ...d.ranking.map((s, i) => {
+                        const l = labelFor(d.mode, i, d.slotCount);
+                        const color = accentFor(d.mode, i, d.slotCount);
+                        return h("li", {
                           key: `${d.id}-${s.id || i}`,
                           className: "flex items-center gap-2 font-jp text-xs",
                         },
-                          h("span", { className: "min-w-[2.25rem] font-mono text-[10px] tracking-wider text-cyan-400/70" },
-                            String(i + 1).padStart(2, "0")),
-                          h("span", { className: "truncate text-white/90" }, s.name)
-                        )
-                      )
+                          h("span", {
+                            className: "min-w-[3.5rem] font-mono text-[10px] tracking-wider",
+                            style: { color },
+                          }, d.mode === MODE_SLOTS
+                            ? `${l.short}${String(l.num).padStart(2, "0")}`
+                            : String(l.num).padStart(2, "0")),
+                          h("span", {
+                            className: "truncate",
+                            style: { color: l.kind === "wait" ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.9)" },
+                          }, s.name)
+                        );
+                      })
                     )
                   )
                 );
@@ -1777,9 +2095,15 @@ const App = () => {
   const [savedDrafts, setSavedDrafts] = useState(() => loadSavedDrafts());
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [revealing, setRevealing] = useState(false);
+  const [mode, setMode] = useState(() => loadMode());
+  const [slotCount, setSlotCount] = useState(() => loadSlotCount());
 
   // Persist schools
   useEffect(() => { saveSchools(schools); }, [schools]);
+
+  // Persist draw settings
+  useEffect(() => { saveMode(mode); }, [mode]);
+  useEffect(() => { saveSlotCount(slotCount); }, [slotCount]);
 
   // Persist saved drafts
   useEffect(() => { saveSavedDrafts(savedDrafts); }, [savedDrafts]);
@@ -1797,7 +2121,15 @@ const App = () => {
     return () => clearTimeout(id);
   }, [phase]);
 
-  const revealed = ranking.slice(0, currentIdx);
+  const isSlots = mode === MODE_SLOTS;
+  // 枠数は参加者数に合わせて常に丸めてから使う（登録を減らしても破綻しないように）
+  const effectiveSlots = clampSlotCount(slotCount, schools.length);
+  // ルーレットを回す回数。発表順モードは全員、枠抽選モードは枠の数だけ。
+  const drawCount = isSlots ? effectiveSlots : schools.length;
+
+  const revealed = ranking.slice(0, Math.min(currentIdx, drawCount));
+  // 補欠は抽選確定後にまとめて確定する（1件ずつ回さない）
+  const waitlist = isSlots && phase === "finished" ? ranking.slice(effectiveSlots) : [];
   const statusLabel =
     phase === "setup" ? "READY" : phase === "drawing" ? "DRAWING" : "COMPLETE";
 
@@ -1817,10 +2149,10 @@ const App = () => {
   const onRevealDone = () => {
     setRevealing(false);
     const next = currentIdx + 1;
-    if (next >= ranking.length) {
+    if (next >= drawCount) {
       setCurrentIdx(next);
       setPhase("finished");
-      // 全順番決定後、少し余韻をおいて全画面表示
+      // 全部決まった後、少し余韻をおいて全画面表示
       setTimeout(() => setShowFullScreen(true), 900);
     } else {
       setCurrentIdx(next);
@@ -1837,7 +2169,7 @@ const App = () => {
 
   const exportCsv = () => {
     if (ranking.length === 0) return;
-    downloadRankingCsv(ranking);
+    downloadRankingCsv(ranking, "", mode, effectiveSlots);
   };
 
   // デフォルト名：「第N回 ドラフト」で軽くサジェスト（既存に第N回があれば + 1）
@@ -1849,14 +2181,16 @@ const App = () => {
       })
       .filter((n) => n > 0);
     const next = (nums.length ? Math.max(...nums) : 0) + 1;
-    return `第${next}回 発表`;
-  }, [savedDrafts]);
+    return isSlots ? `第${next}回 発表枠抽選` : `第${next}回 発表`;
+  }, [savedDrafts, isSlots]);
 
   const saveDraft = (name) => {
     const entry = {
       id: makeId(),
       name: name.trim() || `ドラフト ${new Date().toLocaleString("ja-JP")}`,
       createdAt: new Date().toISOString(),
+      mode,
+      slotCount: isSlots ? effectiveSlots : ranking.length,
       ranking: ranking.map((s) => ({ id: s.id, name: s.name })),
     };
     setSavedDrafts([entry, ...savedDrafts]);
@@ -1877,7 +2211,7 @@ const App = () => {
   };
 
   const exportOneSavedCsv = (d) => {
-    downloadRankingCsv(d.ranking, d.name);
+    downloadRankingCsv(d.ranking, d.name, d.mode, d.slotCount);
   };
 
   return h("div", { className: "relative min-h-screen overflow-x-hidden bg-[#05060E] text-white" },
@@ -1887,6 +2221,8 @@ const App = () => {
       statusLabel,
       muted,
       onToggleMute: () => setMuted((m) => !m),
+      mode,
+      slotCount: effectiveSlots,
     }),
     h("main", { className: "relative z-10 mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8" },
       /* タイトルブロック */
@@ -1896,7 +2232,7 @@ const App = () => {
             initial: { opacity: 0, y: 20 },
             animate: { opacity: 1, y: 0 },
             className: "font-mono text-[10px] tracking-[0.3em] text-cyan-400/70 sm:text-xs sm:tracking-[0.4em]",
-          }, "▸ PRESENTATION DRAFT"),
+          }, isSlots ? "▸ SLOT LOTTERY" : "▸ PRESENTATION DRAFT"),
           h(motion.h1, {
             initial: { opacity: 0, y: 30 },
             animate: { opacity: 1, y: 0 },
@@ -1909,13 +2245,15 @@ const App = () => {
               WebkitTextFillColor: "transparent",
               filter: "drop-shadow(0 4px 30px rgba(0,240,255,0.25))",
             }
-          }, "発表順番決め", h("br"), "ルーレット"),
+          }, isSlots ? "発表枠抽選" : "発表順番決め", h("br"), "ルーレット"),
           h(motion.div, {
             initial: { opacity: 0 },
             animate: { opacity: 1 },
             transition: { delay: 0.2 },
             className: "mt-3 font-mono text-[10px] tracking-[0.2em] text-white/40 sm:text-xs sm:tracking-[0.3em]",
-          }, "PRESENTATION ORDER RANDOMIZER")
+          }, isSlots
+            ? `${schools.length} ENTRIES ▸ ${effectiveSlots} SLOTS`
+            : "PRESENTATION ORDER RANDOMIZER")
         ),
         h("div", { className: "flex flex-wrap items-center gap-2 sm:gap-3" },
           phase === "setup" && h(motion.button, {
@@ -1926,7 +2264,7 @@ const App = () => {
             className: "neon-btn neon-btn--yellow flex items-center gap-2",
           },
             h(Play, { className: "h-4 w-4 fill-current" }),
-            "START DRAFT"
+            isSlots ? "START LOTTERY" : "START DRAFT"
           ),
           (phase === "drawing" || phase === "finished") && h(motion.button, {
             whileHover: { scale: 1.02 },
@@ -1935,7 +2273,7 @@ const App = () => {
             className: "neon-btn neon-btn--cyan flex items-center gap-2",
           },
             h(RotateCcw, { className: "h-4 w-4" }),
-            "NEW DRAFT"
+            isSlots ? "NEW LOTTERY" : "NEW DRAFT"
           ),
           phase === "finished" && h(motion.button, {
             whileHover: { scale: 1.02 },
@@ -1968,19 +2306,38 @@ const App = () => {
       ),
       /* メインレイアウト */
       h("div", { className: "grid gap-6 sm:gap-8 lg:grid-cols-[1fr_1.1fr]" },
-        h("div", null,
+        h("div", { className: "space-y-6 sm:space-y-8" },
           phase === "setup"
-            ? h(SchoolRegistry, { schools, setSchools, disabled: false })
+            ? h(React.Fragment, null,
+                h(DrawSettings, {
+                  mode,
+                  setMode,
+                  slotCount: effectiveSlots,
+                  setSlotCount,
+                  total: schools.length,
+                  disabled: false,
+                }),
+                h(SchoolRegistry, { schools, setSchools, disabled: false })
+              )
             : h(SlotSection, {
                 schools,
                 ranking,
-                currentIdx: Math.min(currentIdx, ranking.length - 1),
+                currentIdx: Math.min(currentIdx, Math.max(0, drawCount - 1)),
                 onFinishPosition,
-                isActive: phase === "drawing" && currentIdx < ranking.length,
+                isActive: phase === "drawing" && currentIdx < drawCount,
+                mode,
+                slotCount: effectiveSlots,
+                drawCount,
               })
         ),
         h("div", null,
-          h(ResultsBoard, { revealed, total: ranking.length || schools.length })
+          h(ResultsBoard, {
+            revealed,
+            total: drawCount,
+            mode,
+            slotCount: effectiveSlots,
+            waitlist,
+          })
         )
       ),
       /* 保存済みドラフト */
@@ -2006,6 +2363,8 @@ const App = () => {
         ranking,
         onClose: () => setShowFullScreen(false),
         onExportCsv: exportCsv,
+        mode,
+        slotCount: effectiveSlots,
       })
     ),
 
@@ -2023,8 +2382,10 @@ const App = () => {
       revealing && ranking[currentIdx] && h(RevealOverlay, {
         key: `reveal-${currentIdx}`,
         school: ranking[currentIdx],
-        position: currentIdx + 1,
-        total: ranking.length,
+        index: currentIdx,
+        total: drawCount,
+        mode,
+        slotCount: effectiveSlots,
         onDone: onRevealDone,
       })
     )
